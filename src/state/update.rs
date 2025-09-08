@@ -4,7 +4,6 @@ use super::item::{ChiPon, KawaItem, Sutehai};
 use crate::algo::agari::{self, AgariCalculator};
 use crate::algo::shanten;
 use crate::mjai::Event;
-use crate::rankings::Rankings;
 use crate::tile::Tile;
 use crate::{must_tile, tu8, tuz};
 use std::cmp::Ordering;
@@ -13,7 +12,7 @@ use std::{iter, mem};
 use anyhow::{Context, Result, ensure};
 
 #[derive(Clone, Copy)]
-pub(super) enum MoveType {
+pub enum MoveType {
     Tsumo,
     Discard,
     FuuroConsume,
@@ -685,14 +684,14 @@ impl PlayerState {
         }
     }
 
-    pub(super) const fn rel(&self, actor: u8) -> usize {
+    pub const fn rel(&self, actor: u8) -> usize {
         ((actor + 4 - self.player_id) % 4) as usize
     }
 
     /// Updates `tiles_seen`, `doras_seen` and `akas_seen`.
     ///
     /// Returns an error if we have already witnessed 4 such tiles.
-    pub(super) fn witness_tile(&mut self, tile: Tile) -> Result<()> {
+    pub fn witness_tile(&mut self, tile: Tile) -> Result<()> {
         ensure!(
             !tile.is_unknown(),
             "rule violation: attempt to witness an unknown tile",
@@ -730,7 +729,7 @@ impl PlayerState {
     ///
     /// Returns an error when trying to discard or consume a tile that the
     /// player doesn't own.
-    pub(super) fn move_tile(&mut self, tile: Tile, move_type: MoveType) -> Result<()> {
+    pub fn move_tile(&mut self, tile: Tile, move_type: MoveType) -> Result<()> {
         let tile_id = tile.deaka().as_usize();
         let tehai_tile = &mut self.tehai[tile_id];
         match move_type {
@@ -777,7 +776,7 @@ impl PlayerState {
     /// Updates `dora_indicators`, witness the dora indicator itself and
     /// recounts doras (`doras_seen` and `doras_owned`) based on all the seen
     /// tiles.
-    pub(super) fn add_dora_indicator(&mut self, tile: Tile) -> Result<()> {
+    pub fn add_dora_indicator(&mut self, tile: Tile) -> Result<()> {
         self.dora_indicators.push(tile);
 
         // Witness the tile so it can be added to `tiles_seen`, possibly also to
@@ -807,7 +806,7 @@ impl PlayerState {
         Ok(())
     }
 
-    pub(super) fn pad_kawa_for_pon_or_daiminkan(&mut self, abs_actor: u8, abs_target: u8) {
+    pub fn pad_kawa_for_pon_or_daiminkan(&mut self, abs_actor: u8, abs_target: u8) {
         let mut i = (abs_target + 1) % 4;
         while i != abs_actor {
             let rel = self.rel(i);
@@ -816,14 +815,14 @@ impl PlayerState {
         }
     }
 
-    pub(super) fn pad_kawa_at_start(&mut self) {
+    pub fn pad_kawa_at_start(&mut self) {
         self.kawa
             .iter_mut()
             .take(self.oya as usize)
             .for_each(|kawa| kawa.push(None));
     }
 
-    pub(super) fn set_can_chi_from_tile(&mut self, tile: Tile) {
+    pub fn set_can_chi_from_tile(&mut self, tile: Tile) {
         self.last_cans.can_chi_low = false;
         self.last_cans.can_chi_mid = false;
         self.last_cans.can_chi_high = false;
@@ -872,13 +871,13 @@ impl PlayerState {
     /// For 3n+2, the return value of `shanten::calc_all` may be `-1`. We don't
     /// allow `-1` and it will be written as `0` in order for
     /// `_shanten_discards` to be calculated properly.
-    pub(super) fn update_shanten(&mut self) {
+    pub fn update_shanten(&mut self) {
         self.shanten = shanten::calc_all(&self.tehai, self.tehai_len_div3).max(0);
         debug_assert!(matches!(self.shanten, 0..=6));
     }
 
     /// Must be called at 3n+2.
-    pub(super) fn update_shanten_discards(&mut self) {
+    pub fn update_shanten_discards(&mut self) {
         assert!(self.last_cans.can_discard, "tehai is not 3n+2");
 
         self.next_shanten_discards.fill(false);
@@ -913,7 +912,7 @@ impl PlayerState {
 
     /// Caller must assure current tehai is 3n+1, and `self.shanten` must be up
     /// to date and correct.
-    pub(super) fn update_waits_and_furiten(&mut self) {
+    pub fn update_waits_and_furiten(&mut self) {
         assert!(!self.last_cans.can_discard, "tehai is not 3n+1");
 
         // Reset the furiten flag here for:
@@ -952,22 +951,24 @@ impl PlayerState {
         }
     }
 
-    pub(super) const fn update_doras_owned(&mut self, actor_rel: usize, tile: Tile) {
+    pub const fn update_doras_owned(&mut self, actor_rel: usize, tile: Tile) {
         self.doras_owned[actor_rel] += self.dora_factor[tile.deaka().as_usize()];
         if tile.is_aka() {
             self.doras_owned[actor_rel] += 1;
         }
     }
 
-    pub(super) fn update_rank(&mut self) {
+    pub fn update_rank(&mut self) {
         self.rank = self.get_rank(self.scores);
     }
 
-    pub(super) fn get_rank(&self, mut scores_rel: [i32; 4]) -> u8 {
+    pub fn get_rank(&self, mut scores_rel: [i32; 4]) -> u8 {
         let scores_abs = {
             scores_rel.rotate_right(self.player_id as usize);
             scores_rel
         };
-        Rankings::new(scores_abs).rank_by_player[self.player_id as usize]
+        let mut player_by_rank = [0, 1, 2, 3];
+        player_by_rank.sort_by_key(|&i| -scores_abs[i as usize]);
+        player_by_rank.iter().position(|&player| player == self.player_id).unwrap() as u8
     }
 }

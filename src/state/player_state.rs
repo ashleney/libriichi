@@ -8,7 +8,6 @@ use std::iter;
 
 use anyhow::Result;
 use derivative::Derivative;
-use pyo3::prelude::*;
 use serde_json as json;
 use tinyvec::{ArrayVec, TinyVec};
 
@@ -18,58 +17,57 @@ use tinyvec::{ArrayVec, TinyVec};
 /// mjai event, along with some helper functions to build an actual agent.
 /// Notably, `PlayerState` encodes observation features into numpy arrays which
 /// serve as inputs for deep learning model.
-#[pyclass]
 #[derive(Clone, Derivative)]
 #[derivative(Default)]
 pub struct PlayerState {
-    pub(super) player_id: u8,
+    pub player_id: u8,
 
     /// Does not include aka.
     #[derivative(Default(value = "[0; 34]"))]
-    pub(super) tehai: [u8; 34],
+    pub tehai: [u8; 34],
 
     /// Does not consider yakunashi, but does consider other kinds of
     /// furiten.
     #[derivative(Default(value = "[false; 34]"))]
-    pub(super) waits: [bool; 34],
+    pub waits: [bool; 34],
 
     #[derivative(Default(value = "[0; 34]"))]
-    pub(super) dora_factor: [u8; 34],
+    pub dora_factor: [u8; 34],
 
     /// For calculating `waits` and `doras_seen`, also for SPCalculator.
     #[derivative(Default(value = "[0; 34]"))]
-    pub(super) tiles_seen: [u8; 34],
+    pub tiles_seen: [u8; 34],
 
     /// For SPCalculator.
-    pub(super) akas_seen: [bool; 3],
+    pub akas_seen: [bool; 3],
 
     #[derivative(Default(value = "[false; 34]"))]
-    pub(super) keep_shanten_discards: [bool; 34],
+    pub keep_shanten_discards: [bool; 34],
 
     #[derivative(Default(value = "[false; 34]"))]
-    pub(super) next_shanten_discards: [bool; 34],
+    pub next_shanten_discards: [bool; 34],
 
     #[derivative(Default(value = "[false; 34]"))]
-    pub(super) forbidden_tiles: [bool; 34],
+    pub forbidden_tiles: [bool; 34],
 
     /// Used for furiten check.
     #[derivative(Default(value = "[false; 34]"))]
-    pub(super) discarded_tiles: [bool; 34],
+    pub discarded_tiles: [bool; 34],
 
-    pub(super) bakaze: Tile,
-    pub(super) jikaze: Tile,
+    pub bakaze: Tile,
+    pub jikaze: Tile,
     /// Counts from 0 unlike mjai.
-    pub(super) kyoku: u8,
-    pub(super) honba: u8,
-    pub(super) kyotaku: u8,
+    pub kyoku: u8,
+    pub honba: u8,
+    pub kyotaku: u8,
     /// Rotated to be relative, so `scores[0]` is the score of the player.
-    pub(super) scores: [i32; 4],
-    pub(super) rank: u8,
+    pub scores: [i32; 4],
+    pub rank: u8,
     /// Relative to `player_id`.
-    pub(super) oya: u8,
+    pub oya: u8,
     /// Including 西入 sudden death.
-    pub(super) is_all_last: bool,
-    pub(super) dora_indicators: ArrayVec<[Tile; 5]>,
+    pub is_all_last: bool,
+    pub dora_indicators: ArrayVec<[Tile; 5]>,
 
     /// 24 is the theoretical max size of kawa, however, since None is included
     /// in the kawa, in some very rare cases (about one in a million hanchans),
@@ -77,72 +75,70 @@ pub struct PlayerState {
     ///
     /// Reference:
     /// <https://detail.chiebukuro.yahoo.co.jp/qa/question_detail/q1020002370>
-    pub(super) kawa: [TinyVec<[Option<KawaItem>; 24]>; 4],
-    pub(super) last_tedashis: [Option<Sutehai>; 4],
-    pub(super) riichi_sutehais: [Option<Sutehai>; 4],
+    pub kawa: [TinyVec<[Option<KawaItem>; 24]>; 4],
+    pub last_tedashis: [Option<Sutehai>; 4],
+    pub riichi_sutehais: [Option<Sutehai>; 4],
 
     /// Using 34-D arrays here may be more efficient, but I don't want to mess up
     /// with aka doras.
-    pub(super) kawa_overview: [ArrayVec<[Tile; 24]>; 4],
-    pub(super) fuuro_overview: [ArrayVec<[ArrayVec<[Tile; 4]>; 4]>; 4],
+    pub kawa_overview: [ArrayVec<[Tile; 24]>; 4],
+    pub fuuro_overview: [ArrayVec<[ArrayVec<[Tile; 4]>; 4]>; 4],
     /// In this field all `Tile` are deaka'd.
-    pub(super) ankan_overview: [ArrayVec<[Tile; 4]>; 4],
+    pub ankan_overview: [ArrayVec<[Tile; 4]>; 4],
 
-    pub(super) riichi_declared: [bool; 4],
-    pub(super) riichi_accepted: [bool; 4],
+    pub riichi_declared: [bool; 4],
+    pub riichi_accepted: [bool; 4],
 
-    pub(super) at_turn: u8,
-    pub(super) tiles_left: u8,
-    pub(super) intermediate_kan: ArrayVec<[Tile; 4]>,
-    pub(super) intermediate_chi_pon: Option<ChiPon>,
+    pub at_turn: u8,
+    pub tiles_left: u8,
+    pub intermediate_kan: ArrayVec<[Tile; 4]>,
+    pub intermediate_chi_pon: Option<ChiPon>,
 
-    pub(super) shanten: i8,
+    pub shanten: i8,
 
-    pub(super) last_self_tsumo: Option<Tile>,
-    pub(super) last_kawa_tile: Option<Tile>,
-    pub(super) last_cans: ActionCandidate,
+    pub last_self_tsumo: Option<Tile>,
+    pub last_kawa_tile: Option<Tile>,
+    pub last_cans: ActionCandidate,
 
     /// Both deaka'd
-    pub(super) ankan_candidates: ArrayVec<[Tile; 3]>,
-    pub(super) kakan_candidates: ArrayVec<[Tile; 3]>,
-    pub(super) chankan_chance: Option<()>,
+    pub ankan_candidates: ArrayVec<[Tile; 3]>,
+    pub kakan_candidates: ArrayVec<[Tile; 3]>,
+    pub chankan_chance: Option<()>,
 
-    pub(super) can_w_riichi: bool,
-    pub(super) is_w_riichi: bool,
-    pub(super) at_rinshan: bool,
-    pub(super) at_ippatsu: bool,
-    pub(super) at_furiten: bool,
-    pub(super) to_mark_same_cycle_furiten: Option<()>,
+    pub can_w_riichi: bool,
+    pub is_w_riichi: bool,
+    pub at_rinshan: bool,
+    pub at_ippatsu: bool,
+    pub at_furiten: bool,
+    pub to_mark_same_cycle_furiten: Option<()>,
 
     /// Used for 4-kan check.
-    pub(super) kans_on_board: u8,
+    pub kans_on_board: u8,
 
-    pub(super) is_menzen: bool,
+    pub is_menzen: bool,
     /// For agari calc, all deaka'd.
-    pub(super) chis: ArrayVec<[u8; 4]>,
-    pub(super) pons: ArrayVec<[u8; 4]>,
-    pub(super) minkans: ArrayVec<[u8; 4]>,
-    pub(super) ankans: ArrayVec<[u8; 4]>,
+    pub chis: ArrayVec<[u8; 4]>,
+    pub pons: ArrayVec<[u8; 4]>,
+    pub minkans: ArrayVec<[u8; 4]>,
+    pub ankans: ArrayVec<[u8; 4]>,
 
     /// Including aka, originally for agari calc usage but also encoded as a
     /// feature to the obs.
-    pub(super) doras_owned: [u8; 4],
-    pub(super) doras_seen: u8,
+    pub doras_owned: [u8; 4],
+    pub doras_seen: u8,
 
-    pub(super) akas_in_hand: [bool; 3],
+    pub akas_in_hand: [bool; 3],
 
     /// For shanten calc.
-    pub(super) tehai_len_div3: u8,
+    pub tehai_len_div3: u8,
 
     /// Used in can_riichi, also in single-player features to get the shanten
     /// for 3n+2.
-    pub(super) has_next_shanten_discard: bool,
+    pub has_next_shanten_discard: bool,
 }
 
-#[pymethods]
 impl PlayerState {
     /// Panics if `player_id` is outside of range [0, 3].
-    #[new]
     #[must_use]
     pub fn new(player_id: u8) -> Self {
         assert!(player_id < 4, "{player_id} is not in range [0, 3]");
@@ -153,15 +149,13 @@ impl PlayerState {
     }
 
     /// Returns an `ActionCandidate`.
-    #[pyo3(name = "update")]
-    pub(super) fn update_json(&mut self, mjai_json: &str) -> Result<ActionCandidate> {
+    pub fn update_json(&mut self, mjai_json: &str) -> Result<ActionCandidate> {
         let event = json::from_str(mjai_json)?;
         self.update(&event)
     }
 
     /// Raises an exception if the action is not valid.
-    #[pyo3(name = "validate_reaction")]
-    pub(super) fn validate_reaction_json(&self, mjai_json: &str) -> Result<()> {
+    pub fn validate_reaction_json(&self, mjai_json: &str) -> Result<()> {
         let action = json::from_str(mjai_json)?;
         self.validate_reaction(&action)
     }

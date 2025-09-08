@@ -7,15 +7,15 @@ use tinyvec::ArrayVec;
 
 /// Mutable state of both the hand and the board.
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub(super) struct State {
+pub struct State {
     // hand
-    pub(super) tehai: [u8; 34],
-    pub(super) akas_in_hand: [bool; 3],
+    pub tehai: [u8; 34],
+    pub akas_in_hand: [bool; 3],
 
     // global
-    pub(super) tiles_in_wall: [u8; 34],
-    pub(super) akas_in_wall: [bool; 3],
-    pub(super) n_extra_tsumo: u8,
+    pub tiles_in_wall: [u8; 34],
+    pub akas_in_wall: [bool; 3],
+    pub n_extra_tsumo: u8,
 }
 
 /// Mutable state of both the hand and the board.
@@ -54,7 +54,7 @@ impl From<InitState> for State {
 }
 
 impl State {
-    pub(super) const fn discard(&mut self, tile: Tile) {
+    pub const fn discard(&mut self, tile: Tile) {
         self.tehai[tile.deaka().as_usize()] -= 1;
         match tile.as_u8() {
             tu8!(5mr) => self.akas_in_hand[0] = false,
@@ -64,7 +64,7 @@ impl State {
         }
     }
 
-    pub(super) const fn undo_discard(&mut self, tile: Tile) {
+    pub const fn undo_discard(&mut self, tile: Tile) {
         self.tehai[tile.deaka().as_usize()] += 1;
         match tile.as_u8() {
             tu8!(5mr) => self.akas_in_hand[0] = true,
@@ -74,7 +74,7 @@ impl State {
         }
     }
 
-    pub(super) const fn deal(&mut self, tile: Tile) {
+    pub const fn deal(&mut self, tile: Tile) {
         self.tiles_in_wall[tile.deaka().as_usize()] -= 1;
         match tile.as_u8() {
             tu8!(5mr) => self.akas_in_wall[0] = false,
@@ -85,7 +85,7 @@ impl State {
         self.undo_discard(tile);
     }
 
-    pub(super) const fn undo_deal(&mut self, tile: Tile) {
+    pub const fn undo_deal(&mut self, tile: Tile) {
         self.discard(tile);
         self.tiles_in_wall[tile.deaka().as_usize()] += 1;
         match tile.as_u8() {
@@ -96,7 +96,7 @@ impl State {
         }
     }
 
-    pub(super) fn get_discard_tiles(
+    pub fn get_discard_tiles(
         &self,
         shanten: i8,
         tehai_len_div3: u8,
@@ -128,7 +128,7 @@ impl State {
         discard_tiles
     }
 
-    pub(super) fn get_draw_tiles(
+    pub fn get_draw_tiles(
         &self,
         shanten: i8,
         tehai_len_div3: u8,
@@ -174,7 +174,7 @@ impl State {
         draw_tiles
     }
 
-    pub(super) fn get_required_tiles(&self, tehai_len_div3: u8) -> ArrayVec<[RequiredTile; 34]> {
+    pub fn get_required_tiles(&self, tehai_len_div3: u8) -> ArrayVec<[RequiredTile; 34]> {
         let mut tehai = self.tehai;
 
         let shanten = CALC_SHANTEN_FN(&tehai, tehai_len_div3);
@@ -200,7 +200,7 @@ impl State {
         required_tiles
     }
 
-    pub(super) fn sum_left_tiles(&self) -> u8 {
+    pub fn sum_left_tiles(&self) -> u8 {
         self.tiles_in_wall.iter().sum()
     }
 }

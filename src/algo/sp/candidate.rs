@@ -23,13 +23,13 @@ pub struct Candidate {
 }
 
 #[derive(Default)]
-pub(super) struct RawCandidate<'a> {
-    pub(super) tile: Tile,
-    pub(super) tenpai_probs: &'a [f32],
-    pub(super) win_probs: &'a [f32],
-    pub(super) exp_values: &'a [f32],
-    pub(super) required_tiles: ArrayVec<[RequiredTile; 34]>,
-    pub(super) shanten_down: bool,
+pub struct RawCandidate<'a> {
+    pub tile: Tile,
+    pub tenpai_probs: &'a [f32],
+    pub win_probs: &'a [f32],
+    pub exp_values: &'a [f32],
+    pub required_tiles: ArrayVec<[RequiredTile; 34]>,
+    pub shanten_down: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -157,26 +157,5 @@ impl Candidate {
                 required_tiles,
             ]
         }
-    }
-
-    #[cfg(feature = "sp_reproduce_cpp_ver")]
-    pub(super) fn calibrate(mut self, real_max_tsumo: usize) -> Self {
-        if self.shanten_down {
-            // 向聴戻しをしない場合のパターンの確率が過小に算出されているような気がするため、
-            // 帳尻をあわせるために1巡ずらしている → 本来必要ない処理なので、あとで消す
-            self.tenpai_probs[0] = 0.;
-            self.tenpai_probs.rotate_left(1);
-            self.win_probs[0] = 0.;
-            self.win_probs.rotate_left(1);
-            self.exp_values[0] = 0.;
-            self.exp_values.rotate_left(1);
-        }
-        self.tenpai_probs.rotate_right(real_max_tsumo);
-        self.tenpai_probs.truncate(real_max_tsumo);
-        self.win_probs.rotate_right(real_max_tsumo);
-        self.win_probs.truncate(real_max_tsumo);
-        self.exp_values.rotate_right(real_max_tsumo);
-        self.exp_values.truncate(real_max_tsumo);
-        self
     }
 }

@@ -1,6 +1,5 @@
 use super::{ActionCandidate, PlayerState};
 use crate::algo::shanten;
-use crate::consts::MAX_VERSION;
 use crate::hand::{hand, hand_with_aka, tile37_to_vec};
 use crate::mjai::Event;
 use crate::{matches_tu8, must_tile, t, tuz};
@@ -56,14 +55,6 @@ impl PlayerState {
             self.chis.is_empty() && self.pons.is_empty() && self.minkans.is_empty()
         );
         assert_eq!(self.doras_owned[0], self.num_doras_in_hand());
-        if self.last_cans.can_act() {
-            for version in 1..=MAX_VERSION {
-                let _encoded = self.encode_obs(version, false);
-                if self.last_cans.can_kakan || self.last_cans.can_ankan {
-                    let _encoded = self.encode_obs(version, true);
-                }
-            }
-        }
     }
 }
 

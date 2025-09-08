@@ -34,14 +34,8 @@ pub use candidate::{Candidate, CandidateColumn};
 pub use state::InitState;
 pub use tile::RequiredTile;
 
-#[cfg(feature = "sp_reproduce_cpp_ver")]
-pub const MAX_TSUMOS_LEFT: usize = 18;
 /// In practice, the max number of tsumos left should be 17, since the first
 /// tsumo of oya is mandatory.
-#[cfg(not(feature = "sp_reproduce_cpp_ver"))]
 pub const MAX_TSUMOS_LEFT: usize = 17;
 
-#[cfg(feature = "sp_reproduce_cpp_ver")]
-const CALC_SHANTEN_FN: fn(&[u8; 34], u8) -> i8 = super::shanten::calc_normal;
-#[cfg(not(feature = "sp_reproduce_cpp_ver"))]
 const CALC_SHANTEN_FN: fn(&[u8; 34], u8) -> i8 = super::shanten::calc_all;

@@ -69,9 +69,6 @@ struct SPCalculatorState<'a, const MAX_TSUMO: usize> {
 
     discard_cache: StateCache<MAX_TSUMO>,
     draw_cache: StateCache<MAX_TSUMO>,
-
-    #[cfg(feature = "sp_reproduce_cpp_ver")]
-    real_max_tsumo: usize,
 }
 
 impl SPCalculator<'_> {
@@ -92,9 +89,6 @@ impl SPCalculator<'_> {
         ensure!(tsumos_left >= 1, "need at least one more tsumo");
         ensure!(tsumos_left <= MAX_TSUMOS_LEFT as u8);
 
-        #[cfg(feature = "sp_reproduce_cpp_ver")]
-        let max_tsumo = if can_discard { 17 } else { 18 };
-        #[cfg(not(feature = "sp_reproduce_cpp_ver"))]
         let max_tsumo = tsumos_left as usize;
 
         let state = State::from(init_state);
@@ -116,8 +110,6 @@ impl SPCalculator<'_> {
                             not_tsumo_prob_table: &not_tsumo_prob_table,
                             discard_cache: Default::default(),
                             draw_cache: Default::default(),
-                            #[cfg(feature = "sp_reproduce_cpp_ver")]
-                            real_max_tsumo: tsumos_left as usize,
                         };
                         calc_state.calc(can_discard, cur_shanten)
                     },)*
@@ -125,9 +117,6 @@ impl SPCalculator<'_> {
                 }
             }
         }
-        #[cfg(feature = "sp_reproduce_cpp_ver")]
-        let candidates = static_expand!(17, 18);
-        #[cfg(not(feature = "sp_reproduce_cpp_ver"))]
         let candidates = static_expand!(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17);
         Ok(candidates)
     }
@@ -228,8 +217,6 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
                     required_tiles,
                     shanten_down: false,
                 });
-                #[cfg(feature = "sp_reproduce_cpp_ver")]
-                let candidate = candidate.calibrate(self.real_max_tsumo);
                 candidates.push(candidate);
             } else if self.sup.calc_shanten_down && shanten_diff == 1 && shanten < SHANTEN_THRES {
                 self.state.discard(tile);
@@ -247,8 +234,6 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
                     required_tiles,
                     shanten_down: true,
                 });
-                #[cfg(feature = "sp_reproduce_cpp_ver")]
-                let candidate = candidate.calibrate(self.real_max_tsumo);
                 candidates.push(candidate);
             }
         }
@@ -273,8 +258,6 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
             required_tiles,
             shanten_down: false,
         });
-        #[cfg(feature = "sp_reproduce_cpp_ver")]
-        let candidate = candidate.calibrate(self.real_max_tsumo);
         vec![candidate]
     }
 
@@ -701,11 +684,6 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
             // 裏ドラの乗る確率を枚数ごとに計算する。
             let mut uradora_probs = [0.; 5];
 
-            #[cfg(feature = "sp_reproduce_cpp_ver")]
-            // 厳密に計算するなら残り枚数は数えるべきだが、あまり影響がないので
-            // 121枚で固定
-            let n_left_tiles = 121;
-            #[cfg(not(feature = "sp_reproduce_cpp_ver"))]
             let n_left_tiles = self.state.sum_left_tiles();
 
             uradora_probs[0] = (n_left_tiles - sum_indicators) as f32 / n_left_tiles as f32;
@@ -880,24 +858,14 @@ mod test {
         let candidates = calc
             .calc(state, can_discard, tsumos_left, cur_shanten)
             .unwrap();
-        let c = if cfg!(feature = "sp_reproduce_cpp_ver") {
-            &candidates[2]
-        } else {
-            &candidates[0]
-        };
+        let c = &candidates[0];
         assert_eq!(c.tile, t!(2s));
         assert_eq!(c.required_tiles.len(), 17);
         assert_eq!(c.num_required_tiles, 57);
         assert!(c.shanten_down);
-        if cfg!(feature = "sp_reproduce_cpp_ver") {
-            assert!(feq(c.tenpai_probs[0], 0.88994724));
-            assert!(feq(c.win_probs[0], 0.32714003));
-            assert!(feq(c.exp_values[0], 5557.188));
-        } else {
-            assert!(feq(c.tenpai_probs[0], 0.90023905));
-            assert!(feq(c.win_probs[0], 0.34794784));
-            assert!(feq(c.exp_values[0], 5894.7617));
-        }
+        assert!(feq(c.tenpai_probs[0], 0.90023905));
+        assert!(feq(c.win_probs[0], 0.34794784));
+        assert!(feq(c.exp_values[0], 5894.7617));
 
         // ---
 
@@ -939,14 +907,11 @@ mod test {
             .unwrap();
         assert_eq!(candidates.len(), 7);
 
-        // feature = "sp_reproduce_cpp_ver" does not use chitoi shanten
-        if !cfg!(feature = "sp_reproduce_cpp_ver") {
-            let c = &candidates[1];
-            assert_eq!(c.tile, t!(1m));
-            assert!(c.shanten_down);
-            assert_eq!(c.required_tiles.len(), 33); // literally all kinds of tiles
-            assert_eq!(c.num_required_tiles, 34 * 4 - tiles_seen.iter().sum::<u8>());
-        }
+        let c = &candidates[1];
+        assert_eq!(c.tile, t!(1m));
+        assert!(c.shanten_down);
+        assert_eq!(c.required_tiles.len(), 33); // literally all kinds of tiles
+        assert_eq!(c.num_required_tiles, 34 * 4 - tiles_seen.iter().sum::<u8>());
     }
 
     #[test]
@@ -995,14 +960,8 @@ mod test {
         assert_eq!(c.tile, t!(?));
         assert_eq!(c.required_tiles.len(), 16);
         assert_eq!(c.num_required_tiles, 54);
-        if cfg!(feature = "sp_reproduce_cpp_ver") {
-            assert!(feq(c.tenpai_probs[0], 0.4992795));
-            assert!(feq(c.win_probs[0], 0.042052355));
-            assert!(feq(c.exp_values[0], 527.17926));
-        } else {
-            assert!(feq(c.tenpai_probs[0], 0.45017204));
-            assert!(feq(c.win_probs[0], 0.03441279));
-            assert!(feq(c.exp_values[0], 432.26678));
-        }
+        assert!(feq(c.tenpai_probs[0], 0.45017204));
+        assert!(feq(c.win_probs[0], 0.03441279));
+        assert!(feq(c.exp_values[0], 432.26678));
     }
 }

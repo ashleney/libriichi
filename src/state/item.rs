@@ -5,25 +5,25 @@ use serde::Serialize;
 use tinyvec::ArrayVec;
 
 #[derive(Debug, Clone, Serialize)]
-pub(super) struct KawaItem {
-    pub(super) chi_pon: Option<ChiPon>,
-    pub(super) kan: ArrayVec<[Tile; 4]>,
-    pub(super) sutehai: Sutehai,
+pub struct KawaItem {
+    pub chi_pon: Option<ChiPon>,
+    pub kan: ArrayVec<[Tile; 4]>,
+    pub sutehai: Sutehai,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
-pub(super) struct Sutehai {
-    pub(super) tile: Tile,
+pub struct Sutehai {
+    pub tile: Tile,
     // only for normal dora, aka is not included
-    pub(super) is_dora: bool,
-    pub(super) is_tedashi: bool,
-    pub(super) is_riichi: bool,
+    pub is_dora: bool,
+    pub is_tedashi: bool,
+    pub is_riichi: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(super) struct ChiPon {
-    pub(super) consumed: [Tile; 2],
-    pub(super) target_tile: Tile,
+pub struct ChiPon {
+    pub consumed: [Tile; 2],
+    pub target_tile: Tile,
 }
 
 impl fmt::Display for Sutehai {

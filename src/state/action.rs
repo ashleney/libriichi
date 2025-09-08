@@ -5,72 +5,51 @@ use crate::tile::Tile;
 use crate::tuz;
 
 use anyhow::{Result, bail, ensure};
-use pyo3::prelude::*;
 use serde::Serialize;
 
-#[pyclass]
 #[derive(Debug, Default, Clone, Copy, Serialize)]
 pub struct ActionCandidate {
-    #[pyo3(get)]
     pub can_discard: bool,
-    #[pyo3(get)]
     pub can_chi_low: bool,
-    #[pyo3(get)]
     pub can_chi_mid: bool,
-    #[pyo3(get)]
     pub can_chi_high: bool,
-    #[pyo3(get)]
     pub can_pon: bool,
-    #[pyo3(get)]
     pub can_daiminkan: bool,
-    #[pyo3(get)]
     pub can_kakan: bool,
-    #[pyo3(get)]
     pub can_ankan: bool,
-    #[pyo3(get)]
     pub can_riichi: bool,
-    #[pyo3(get)]
     pub can_tsumo_agari: bool,
-    #[pyo3(get)]
     pub can_ron_agari: bool,
-    #[pyo3(get)]
     pub can_ryukyoku: bool,
 
-    #[pyo3(get)]
     pub target_actor: u8,
 }
 
-#[pymethods]
 impl ActionCandidate {
-    #[getter]
     #[inline]
     #[must_use]
     pub const fn can_chi(&self) -> bool {
         self.can_chi_low || self.can_chi_mid || self.can_chi_high
     }
 
-    #[getter]
     #[inline]
     #[must_use]
     pub const fn can_kan(&self) -> bool {
         self.can_daiminkan || self.can_kakan || self.can_ankan
     }
 
-    #[getter]
     #[inline]
     #[must_use]
     pub const fn can_agari(&self) -> bool {
         self.can_tsumo_agari || self.can_ron_agari
     }
 
-    #[getter]
     #[inline]
     #[must_use]
     pub const fn can_pass(&self) -> bool {
         self.can_chi() || self.can_pon || self.can_daiminkan || self.can_ron_agari
     }
 
-    #[getter]
     #[inline]
     #[must_use]
     pub const fn can_act(&self) -> bool {

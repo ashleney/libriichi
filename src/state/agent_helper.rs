@@ -506,7 +506,7 @@ impl PlayerState {
     /// be >= 0 and `self.tiles_left` must be >= 4.
     ///
     /// This function is currently highly internal.
-    pub(super) fn single_player_tables(&self) -> Result<SinglePlayerTables> {
+    pub fn single_player_tables(&self) -> Result<SinglePlayerTables> {
         ensure!(self.tiles_left >= 4, "need at least one more tsumo");
 
         let cur_shanten = self.real_time_shanten();
