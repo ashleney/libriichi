@@ -10,14 +10,13 @@ use std::rc::Rc;
 use ahash::AHashMap;
 use anyhow::{Result, ensure};
 
-const SHANTEN_THRES: i8 = 3;
 const MAX_TILES_LEFT: usize = 34 * 4 - 1 - 13;
 
 /// 裏ドラの乗る確率のテーブル
 const URADORA_PROB_TABLE: [[f32; 13]; 5] = include!("../data/uradora_prob_table.txt");
 
-type StateCache<const MAX_TSUMO: usize> =
-    [AHashMap<State, Rc<Values<MAX_TSUMO>>>; SHANTEN_THRES as usize + 1];
+// 5 shanten is the realistic maximum that we can use to analyze
+type StateCache<const MAX_TSUMO: usize> = [AHashMap<State, Rc<Values<MAX_TSUMO>>>; 6];
 
 struct Values<const MAX_TSUMO: usize> {
     tenpai_probs: [f32; MAX_TSUMO],
@@ -52,12 +51,10 @@ pub struct SPCalculator<'a> {
     pub prefer_riichi: bool,
     pub sort_result: bool,
 
-    /// 和了確率を最大化
     pub maximize_win_prob: bool,
-    /// 手変わり考慮
-    pub calc_tegawari: bool,
-    /// 向聴落とし考慮
-    pub calc_shanten_down: bool,
+    pub max_shanten: i8,
+    pub calc_tegawari: Option<i8>,
+    pub calc_shanten_down: Option<i8>,
 }
 
 struct SPCalculatorState<'a, const MAX_TSUMO: usize> {
@@ -88,6 +85,10 @@ impl SPCalculator<'_> {
         ensure!(cur_shanten >= 0, "can't calculate an agari hand");
         ensure!(tsumos_left >= 1, "need at least one more tsumo");
         ensure!(tsumos_left <= MAX_TSUMOS_LEFT as u8);
+        ensure!(
+            self.max_shanten <= 5,
+            "cannot reasonably calculate 6-shanten hands"
+        );
 
         let max_tsumo = tsumos_left as usize;
 
@@ -157,7 +158,7 @@ fn build_not_tsumo_prob_table<const MAX_TSUMO: usize>(
 
 impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
     fn calc(&mut self, can_discard: bool, cur_shanten: i8) -> Vec<Candidate> {
-        if cur_shanten <= SHANTEN_THRES {
+        if cur_shanten <= self.sup.max_shanten {
             // 3向聴以下は聴牌確率、和了確率、期待値を計算する。
             let mut candidates = if can_discard {
                 self.analyze_discard(cur_shanten)
@@ -218,7 +219,10 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
                     shanten_down: false,
                 });
                 candidates.push(candidate);
-            } else if self.sup.calc_shanten_down && shanten_diff == 1 && shanten < SHANTEN_THRES {
+            } else if let Some(shanten_down_max) = self.sup.calc_shanten_down
+                && shanten_diff == 1
+                && shanten < shanten_down_max
+            {
                 self.state.discard(tile);
                 let required_tiles = self.state.get_required_tiles(self.sup.tehai_len_div3);
                 self.state.n_extra_tsumo += 1;
@@ -295,7 +299,10 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
     }
 
     fn draw(&mut self, shanten: i8) -> Rc<Values<MAX_TSUMO>> {
-        if self.sup.calc_tegawari && self.state.n_extra_tsumo == 0 {
+        if let Some(tegawari_max_shanten) = self.sup.calc_tegawari
+            && tegawari_max_shanten <= shanten
+            && self.state.n_extra_tsumo == 0
+        {
             self.draw_with_tegawari(shanten)
         } else {
             self.draw_without_tegawari(shanten)
@@ -570,10 +577,10 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
                 self.state.discard(tile);
                 values = self.draw(shanten);
                 self.state.undo_discard(tile);
-            } else if self.sup.calc_shanten_down
+            } else if let Some(shanten_down_max) = self.sup.calc_shanten_down
                 && self.state.n_extra_tsumo == 0
                 && shanten_diff == 1
-                && shanten < SHANTEN_THRES
+                && shanten < shanten_down_max
             {
                 // 向聴戻しになる打牌
                 self.state.discard(tile);
@@ -765,8 +772,9 @@ mod test {
             calc_haitei: false,
             sort_result: true,
             maximize_win_prob: false,
-            calc_tegawari: true,
-            calc_shanten_down: true,
+            max_shanten: 3,
+            calc_tegawari: Some(3),
+            calc_shanten_down: Some(3),
         };
 
         let tehai = hand("45678m 34789p 3344z").unwrap();
@@ -837,8 +845,9 @@ mod test {
             calc_haitei: true,
             sort_result: true,
             maximize_win_prob: false,
-            calc_tegawari: true,
-            calc_shanten_down: true,
+            max_shanten: 3,
+            calc_tegawari: Some(3),
+            calc_shanten_down: Some(3),
         };
 
         let tehai = hand("45677m 456778p 248s").unwrap();
@@ -885,8 +894,9 @@ mod test {
             calc_haitei: false,
             sort_result: true,
             maximize_win_prob: false,
-            calc_tegawari: true,
-            calc_shanten_down: true,
+            max_shanten: 3,
+            calc_tegawari: Some(3),
+            calc_shanten_down: Some(3),
         };
         let tehai = hand("9999m 6677p 88s 335z 1m").unwrap();
         let mut tiles_seen = tehai;
@@ -932,8 +942,9 @@ mod test {
             calc_haitei: true,
             sort_result: true,
             maximize_win_prob: true,
-            calc_tegawari: true,
-            calc_shanten_down: true,
+            max_shanten: 3,
+            calc_tegawari: Some(3),
+            calc_shanten_down: Some(3),
         };
 
         let tehai = hand("45677m 456778p 48s").unwrap();

@@ -128,11 +128,7 @@ impl State {
         discard_tiles
     }
 
-    pub fn get_draw_tiles(
-        &self,
-        shanten: i8,
-        tehai_len_div3: u8,
-    ) -> ArrayVec<[DrawTile; 37]> {
+    pub fn get_draw_tiles(&self, shanten: i8, tehai_len_div3: u8) -> ArrayVec<[DrawTile; 37]> {
         let mut draw_tiles = ArrayVec::default();
 
         let mut tehai = self.tehai;
@@ -203,4 +199,17 @@ impl State {
     pub fn sum_left_tiles(&self) -> u8 {
         self.tiles_in_wall.iter().sum()
     }
+}
+
+/// Preferences for single-player table calculation
+pub struct SPOptions {
+    /// Whether to maximize win probability instaed of expected value
+    pub maximize_win_prob: bool,
+    /// Max shanten for calculation
+    /// Hands with higher shanten only use ukeire
+    pub max_shanten: i8,
+    /// Max shanten for tegawari calculation
+    pub calc_tegawari: Option<i8>,
+    /// Max shanten from which the hand may still go one shanten down
+    pub calc_shanten_down: Option<i8>,
 }

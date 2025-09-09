@@ -204,13 +204,19 @@ impl AgariCalculator<'_> {
     #[inline]
     #[must_use]
     pub fn has_yaku(&self) -> bool {
-        self.search_yakus_impl(true).is_some()
+        self.search_yakus_impl::<true, false>().is_some()
     }
 
     #[inline]
     #[must_use]
     pub fn search_yakus(&self) -> Option<Agari> {
-        self.search_yakus_impl(false)
+        self.search_yakus_impl::<false, false>().map(|x| x.agari)
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn search_yakus_with_names(&self) -> Option<AgariNames> {
+        self.search_yakus_impl::<false, true>()
     }
 
     /// `additional_hans` includes 門前清自摸和, (両)立直, 槍槓, 嶺上開花, 海底
@@ -254,7 +260,59 @@ impl AgariCalculator<'_> {
         }
     }
 
-    fn search_yakus_impl(&self, return_if_any: bool) -> Option<Agari> {
+    pub fn agari_with_names(&self, additional_hans: u8, doras: u8) -> Option<AgariNames> {
+        if let Some(agari_names) = self.search_yakus_with_names() {
+            Some(AgariNames {
+                agari: match agari_names.agari {
+                    Agari::Normal { fu, han } => Agari::Normal {
+                        fu,
+                        han: han + additional_hans + doras,
+                    },
+                    agari => agari,
+                },
+                yakus: agari_names.yakus,
+                dora: 0,
+                aka_dora: 0,
+                ura_dora: 0,
+            })
+        } else if additional_hans == 0 {
+            None
+        } else if additional_hans + doras >= 5 {
+            Some(AgariNames {
+                agari: Agari::Normal {
+                    fu: 0,
+                    han: additional_hans + doras,
+                },
+                yakus: vec![],
+                dora: 0,
+                aka_dora: 0,
+                ura_dora: 0,
+            })
+        } else {
+            let (tile14, key) = get_tile14_and_key(self.tehai);
+            let divs = AGARI_TABLE.get(&key)?;
+
+            let fu = divs
+                .iter()
+                .map(|div| DivWorker::new(self, &tile14, div))
+                .map(|w| w.calc_fu(false))
+                .max()?;
+            Some(AgariNames {
+                agari: Agari::Normal {
+                    fu,
+                    han: additional_hans + doras,
+                },
+                yakus: vec![],
+                dora: 0,
+                aka_dora: 0,
+                ura_dora: 0,
+            })
+        }
+    }
+
+    fn search_yakus_impl<const RETURN_IF_ANY: bool, const RECORD_NAMES: bool>(
+        &self,
+    ) -> Option<AgariNames> {
         assert_eq!(
             self.is_menzen,
             self.chis.is_empty() && self.pons.is_empty() && self.minkans.is_empty(),
@@ -262,23 +320,38 @@ impl AgariCalculator<'_> {
 
         // Kokushi has a special pattern and cannot be combined with other
         // pattern-based yakus.
-        if self.is_menzen && shanten::calc_kokushi(self.tehai) == -1 {
-            // 国士無双
-            return Some(Agari::Yakuman(1));
+        if self.is_menzen && crate::algo::shanten::calc_kokushi(self.tehai) == -1 {
+            return Some(if self.tehai[self.winning_tile as usize] == 2 {
+                AgariNames {
+                    agari: Agari::Yakuman(2),
+                    yakus: vec!["国士無双十三面待ち"],
+                    dora: 0,
+                    aka_dora: 0,
+                    ura_dora: 0,
+                }
+            } else {
+                AgariNames {
+                    agari: Agari::Yakuman(1),
+                    yakus: vec!["国士無双"],
+                    dora: 0,
+                    aka_dora: 0,
+                    ura_dora: 0,
+                }
+            });
         }
 
         let (tile14, key) = get_tile14_and_key(self.tehai);
         let divs = AGARI_TABLE.get(&key)?;
 
-        if return_if_any {
+        if RETURN_IF_ANY {
             // Benchmark result indicates it is too trivial to use rayon here.
             divs.iter()
                 .map(|div| DivWorker::new(self, &tile14, div))
-                .find_map(|w| w.search_yakus::<true>())
+                .find_map(|w| w.search_yakus::<RETURN_IF_ANY, RECORD_NAMES>())
         } else {
             divs.iter()
                 .map(|div| DivWorker::new(self, &tile14, div))
-                .filter_map(|w| w.search_yakus::<false>())
+                .filter_map(|w| w.search_yakus::<RETURN_IF_ANY, RECORD_NAMES>())
                 .max()
         }
     }
@@ -449,9 +522,12 @@ impl<'a> DivWorker<'a> {
         ((fu - 1) / 10 + 1) * 10
     }
 
-    fn search_yakus<const RETURN_IF_ANY: bool>(&self) -> Option<Agari> {
+    fn search_yakus<const RETURN_IF_ANY: bool, const RECORD_NAMES: bool>(
+        &self,
+    ) -> Option<AgariNames> {
         let mut han = 0;
         let mut yakuman = 0;
+        let mut names: Vec<&'static str> = vec![];
 
         let has_pinfu = self.menzen_shuntsu.len() == 4
             && !matches_tu8!(self.pair_tile, P | F | C)
@@ -465,18 +541,37 @@ impl<'a> DivWorker<'a> {
         macro_rules! make_return {
             () => {
                 return if yakuman > 0 {
-                    Some(Agari::Yakuman(yakuman))
+                    Some(AgariNames {
+                        agari: Agari::Yakuman(yakuman),
+                        yakus: names,
+                        dora: 0,
+                        aka_dora: 0,
+                        ura_dora: 0,
+                    })
                 } else if han > 0 {
                     let fu = if RETURN_IF_ANY || han >= 5 {
                         0
                     } else {
                         self.calc_fu(has_pinfu)
                     };
-                    Some(Agari::Normal { fu, han })
+                    Some(AgariNames {
+                        agari: Agari::Normal { fu, han },
+                        yakus: names,
+                        dora: 0,
+                        aka_dora: 0,
+                        ura_dora: 0,
+                    })
                 } else {
                     None
                 };
             };
+        }
+        macro_rules! record_yaku {
+            ($($block:tt)*) => {{
+                if RECORD_NAMES {
+                    names.push($($block)*);
+                }
+            }};
         }
         macro_rules! check_early_return {
             ($($block:tt)*) => {{
@@ -488,20 +583,25 @@ impl<'a> DivWorker<'a> {
         }
 
         if has_pinfu {
-            // 平和
+            record_yaku! { "平和" }
             check_early_return! { han += 1 };
         }
         if self.div.has_chitoi {
-            // 七対子
+            record_yaku! { "七対子" }
             check_early_return! { han += 2 };
         }
         if self.div.has_ryanpeikou {
-            // 二盃口
+            record_yaku! { "二盃口" }
             check_early_return! { han += 3 };
         }
         if self.div.has_chuuren {
-            // 九蓮宝燈
-            check_early_return! { yakuman += 1 };
+            if matches!(self.sup.tehai[self.sup.winning_tile as usize], 2 | 4) {
+                record_yaku! { "純正九蓮宝燈" }
+                check_early_return! { yakuman += 2 };
+            } else {
+                record_yaku! { "九蓮宝燈" }
+                check_early_return! { yakuman += 1 };
+            }
         }
 
         let has_tanyao = if self.div.has_chitoi {
@@ -524,14 +624,14 @@ impl<'a> DivWorker<'a> {
                 })
         };
         if has_tanyao {
-            // 断幺九
+            record_yaku! { "断幺九" }
             check_early_return! { han += 1 };
         }
 
         let has_toitoi =
             !self.div.has_chitoi && self.menzen_shuntsu.is_empty() && self.sup.chis.is_empty();
         if has_toitoi {
-            // 対々和
+            record_yaku! { "対々和" }
             check_early_return! { han += 2 };
         }
 
@@ -563,17 +663,21 @@ impl<'a> DivWorker<'a> {
                 .for_each(drop);
         }
         if isou_kind.is_none() {
-            // 字一色
+            record_yaku! { "字一色" }
             check_early_return! { yakuman += 1 };
         } else if is_chinitsu_or_honitsu {
-            // 混一色, 清一色
-            let n = if has_jihai { 2 } else { 5 } + self.sup.is_menzen as u8;
-            check_early_return! { han += n };
+            if has_jihai {
+                record_yaku! { "混一色" }
+                check_early_return! { han += 2 + self.sup.is_menzen as u8 };
+            } else {
+                record_yaku! { "清一色" }
+                check_early_return! { han += 5 + self.sup.is_menzen as u8 };
+            }
         }
 
         if !self.div.has_chitoi {
-            // 一盃口
             if self.div.has_ipeikou {
+                record_yaku! { "一盃口" }
                 check_early_return! { han += 1 };
             } else if !self.sup.ankans.is_empty()
                 && self.sup.is_menzen
@@ -592,14 +696,16 @@ impl<'a> DivWorker<'a> {
                     }
                 });
                 if has_ipeikou {
+                    record_yaku! { "一盃口" }
                     check_early_return! { han += 1 };
                 }
             }
 
-            // 一気通貫
             if self.sup.is_menzen && self.div.has_ittsuu {
+                record_yaku! { "一気通貫" }
                 check_early_return! { han += 2 };
             } else if self.sup.chis.is_empty() && self.div.has_ittsuu {
+                record_yaku! { "一気通貫" }
                 check_early_return! { han += 1 };
             } else if self.menzen_shuntsu.len() + self.sup.chis.len() >= 3 {
                 let mut kinds = [0; 3];
@@ -614,6 +720,7 @@ impl<'a> DivWorker<'a> {
                     };
                 }
                 if kinds.contains(&0b111) {
+                    record_yaku! { "一気通貫" }
                     check_early_return! { han += 1 };
                 }
             }
@@ -625,8 +732,8 @@ impl<'a> DivWorker<'a> {
                 s_counter[num as usize] |= 0b1 << kind;
             }
             if s_counter.contains(&0b111) {
-                // 三色同順
                 let n = if self.sup.is_menzen { 2 } else { 1 };
+                record_yaku! { "三色同順" }
                 check_early_return! { han += n };
             } else {
                 let mut k_counter = [0; 9];
@@ -638,7 +745,7 @@ impl<'a> DivWorker<'a> {
                     }
                 }
                 if k_counter.contains(&0b111) {
-                    // 三色同刻
+                    record_yaku! { "三色同刻" }
                     check_early_return! { han += 2 };
                 }
             }
@@ -646,19 +753,31 @@ impl<'a> DivWorker<'a> {
             let ankous_count = self.sup.ankans.len() + self.menzen_kotsu.len()
                 - self.winning_tile_makes_minkou as usize;
             match ankous_count {
-                // 四暗刻
-                4 => check_early_return! { yakuman += 1 },
-                // 三暗刻
-                3 => check_early_return! { han += 2 },
+                4 if self.sup.tehai[self.sup.winning_tile as usize] == 2 => {
+                    record_yaku! { "四暗刻単騎" }
+                    check_early_return! { yakuman += 2 };
+                }
+                4 => {
+                    record_yaku! { "四暗刻" }
+                    check_early_return! { yakuman += 1 }
+                }
+                3 => {
+                    record_yaku! { "三暗刻" }
+                    check_early_return! { han += 2 };
+                }
                 _ => (),
             };
 
             let kans_count = self.sup.ankans.len() + self.sup.minkans.len();
             match kans_count {
-                // 四槓子
-                4 => check_early_return! { yakuman += 1 },
-                // 三槓子
-                3 => check_early_return! { han += 2 },
+                4 => {
+                    record_yaku! { "四槓子" }
+                    check_early_return! { yakuman += 1 };
+                }
+                3 => {
+                    record_yaku! { "三槓子" }
+                    check_early_return! { han += 2 };
+                }
                 _ => (),
             };
 
@@ -668,12 +787,11 @@ impl<'a> DivWorker<'a> {
                 .all(|k| matches_tu8!(k, 2s | 3s | 4s | 6s | 8s | F))
                 && self.all_shuntsu().all(|s| s == tu8!(2s)); // only 234s is possible for shuntsu in ryuisou
             if has_ryuisou {
-                // 緑一色
+                record_yaku! { "緑一色" };
                 check_early_return! { yakuman += 1 };
             }
 
             if !has_tanyao {
-                // 役牌 + 大小三元四喜
                 let mut has_jihai = [false; 7];
                 for k in self.all_kotsu_and_kantsu() {
                     if k >= 3 * 9 {
@@ -681,34 +799,41 @@ impl<'a> DivWorker<'a> {
                     }
                 }
                 if has_jihai[self.sup.bakaze as usize - 3 * 9] {
-                    // 役牌:門風牌
+                    record_yaku! { "役牌,場風" }
                     check_early_return! { han += 1 };
                 }
                 if has_jihai[self.sup.jikaze as usize - 3 * 9] {
-                    // 役牌:場風牌
+                    record_yaku! { "役牌,自風" }
                     check_early_return! { han += 1 };
                 }
 
                 let saneins = (4..7).filter(|&i| has_jihai[i]).count() as u8;
                 if saneins > 0 {
-                    // 役牌:三元牌
                     check_early_return! { han += saneins };
+                    if has_jihai[4] {
+                        record_yaku! { "役牌,白" }
+                    }
+                    if has_jihai[5] {
+                        record_yaku! { "役牌,發" }
+                    }
+                    if has_jihai[6] {
+                        record_yaku! { "役牌,中" }
+                    }
                     if saneins == 3 {
-                        // 大三元
+                        record_yaku! { "大三元" }
                         check_early_return! { yakuman += 1 };
                     } else if saneins == 2 && matches_tu8!(self.pair_tile, P | F | C) {
-                        // 小三元
+                        record_yaku! { "小三元" }
                         check_early_return! { han += 2 };
                     }
                 }
 
                 let winds = (0..4).filter(|&i| has_jihai[i]).count();
-                #[allow(clippy::if_same_then_else)]
                 if winds == 4 {
-                    // 大四喜
-                    check_early_return! { yakuman += 1 };
+                    record_yaku! { "大四喜" }
+                    check_early_return! { yakuman += 2 };
                 } else if winds == 3 && matches_tu8!(self.pair_tile, E | S | W | N) {
-                    // 小四喜
+                    record_yaku! { "小四喜" }
                     check_early_return! { yakuman += 1 };
                 }
             }
@@ -736,10 +861,10 @@ impl<'a> DivWorker<'a> {
             if is_junchan_or_chanta_or_chinroutou_or_honroutou {
                 if self.div.has_chitoi || has_toitoi {
                     if has_jihai {
-                        // 混老頭
+                        record_yaku! { "混老頭" }
                         check_early_return! { han += 2 };
                     } else {
-                        // 清老頭
+                        record_yaku! { "清老頭" }
                         check_early_return! { yakuman += 1 };
                     }
                 } else {
@@ -748,9 +873,13 @@ impl<'a> DivWorker<'a> {
                         num == 0 || num == 6
                     });
                     if is_junchan_or_chanta {
-                        // 混全帯幺九, 純全帯幺九
-                        let n = if has_jihai { 1 } else { 2 } + self.sup.is_menzen as u8;
-                        check_early_return! { han += n };
+                        if has_jihai {
+                            record_yaku! { "混全帯幺九" }
+                            check_early_return! { han += 1 + self.sup.is_menzen as u8 };
+                        } else {
+                            record_yaku! { "純全帯幺九" }
+                            check_early_return! { han += 2 + self.sup.is_menzen as u8 };
+                        }
                     }
                 }
             }
@@ -909,6 +1038,92 @@ pub fn check_ankan_after_riichi(tehai: &[u8; 34], len_div3: u8, tile: Tile, stri
 
             true
         })
+}
+
+pub const YAKU_NAMES: &[[&str; 2]] = &[
+    ["門前清自摸和", "Fully Concealed Hand"],
+    ["立直", "Riichi"],
+    ["ダブル立直", "Double Riichi"],
+    ["一発", "Ippatsu"],
+    ["平和", "Pinfu"],
+    ["断幺九", "All Simples"],
+    ["一盃口", "Pure Double Sequence"],
+    ["二盃口", "Twice Pure Double Sequence"],
+    ["役牌,白", "White Dragon"],
+    ["役牌,發", "Green Dragon"],
+    ["役牌,中", "Red Dragon"],
+    ["役牌,自風", "Seat Wind"],
+    ["役牌,場風", "Prevalent Wind"],
+    ["三色同順", "Mixed Triple Sequence"],
+    ["一気通貫", "Pure Straight"],
+    ["混全帯幺九", "Half Outside Hand"],
+    ["純全帯幺九", "Fully Outside Hand"],
+    ["対々和", "All Triplets"],
+    ["三暗刻", "Three Concealed Triplets"],
+    ["三槓子", "Three Quads"],
+    ["三色同刻", "Triple Triplets"],
+    ["小三元", "Little Three Dragons"],
+    ["混老頭", "All Terminals and Honors"],
+    ["七対子", "Seven Pairs"],
+    ["混一色", "Half Flush"],
+    ["清一色", "Full Flush"],
+    ["海底摸月", "Under the Sea"],
+    ["河底撈魚", "Under the River"],
+    ["嶺上開花", "After a Kan"],
+    ["槍槓", "Robbing a Kan"],
+    ["ドラ", "Dora"],
+    ["赤ドラ", "Red Five"],
+    ["裏ドラ", "Ura Dora"],
+    ["抜きドラ", "Kita"],
+    ["流し満貫", "Nagashi Mangan"],
+    ["天和", "Blessing of Heaven"],
+    ["地和", "Blessing of Earth"],
+    ["大三元", "Big Three Dragons"],
+    ["四暗刻", "Four Concealed Triplets"],
+    ["四暗刻単騎", "Single-wait Four Concealed Triplets"],
+    ["字一色", "All Honors"],
+    ["緑一色", "All Green"],
+    ["清老頭", "All Terminals"],
+    ["国士無双", "Thirteen Orphans"],
+    ["国士無双十三面待ち", "Thirteen-wait Thirteen Orphans"],
+    ["小四喜", "Four Little Winds"],
+    ["大四喜", "Four Big Winds"],
+    ["四槓子", "Four Quads"],
+    ["九蓮宝燈", "Nine Gates"],
+    ["純正九蓮宝燈", "True Nine Gates"],
+];
+
+pub static YAKU_MAP: LazyLock<BoomHashMap<&'static str, &'static str>> = LazyLock::new(|| {
+    let (keys, values) = YAKU_NAMES.iter().map(|i| (i[0], i[1])).unzip();
+    BoomHashMap::new(keys, values)
+});
+
+/// agari with named yaku
+#[derive(Debug, Clone, Eq)]
+pub struct AgariNames {
+    pub agari: Agari,
+    pub yakus: Vec<&'static str>,
+    pub dora: u8,
+    pub aka_dora: u8,
+    pub ura_dora: u8,
+}
+
+impl PartialEq for AgariNames {
+    fn eq(&self, other: &Self) -> bool {
+        self.agari.eq(&other.agari)
+    }
+}
+
+impl PartialOrd for AgariNames {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for AgariNames {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.agari.cmp(&other.agari)
+    }
 }
 
 #[cfg(test)]

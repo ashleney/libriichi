@@ -199,7 +199,13 @@ impl PlayerState {
 
         let can_discard = self.last_cans.can_discard;
         let mut sp_tables = Candidate::csv_header(can_discard).join("\t");
-        if let Ok(tables) = self.single_player_tables() {
+        let options = &crate::algo::sp::SPOptions {
+            maximize_win_prob: false,
+            max_shanten: 3,
+            calc_tegawari: None,
+            calc_shanten_down: None,
+        };
+        if let Ok(tables) = self.single_player_tables(options) {
             for candidate in tables.max_ev_table {
                 sp_tables.push('\n');
                 sp_tables.push_str(&candidate.csv_row(can_discard).join("\t"));

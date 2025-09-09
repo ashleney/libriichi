@@ -1,7 +1,6 @@
 use super::{ActionCandidate, PlayerState};
 use crate::tile::Tile;
 
-
 impl PlayerState {
     #[inline]
     #[must_use]

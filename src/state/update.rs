@@ -969,6 +969,9 @@ impl PlayerState {
         };
         let mut player_by_rank = [0, 1, 2, 3];
         player_by_rank.sort_by_key(|&i| -scores_abs[i as usize]);
-        player_by_rank.iter().position(|&player| player == self.player_id).unwrap() as u8
+        player_by_rank
+            .iter()
+            .position(|&player| player == self.player_id)
+            .unwrap() as u8
     }
 }

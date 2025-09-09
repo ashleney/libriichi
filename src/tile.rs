@@ -149,23 +149,6 @@ impl Tile {
         }
     }
 
-    #[inline]
-    #[must_use]
-    pub const fn augment(self) -> Self {
-        if self.is_unknown() {
-            return self;
-        }
-        let tile = self.deaka();
-        let tid = tile.0;
-        let kind = tid / 9;
-        let ret = match kind {
-            0 => Self(tid + 9),
-            1 => Self(tid - 9),
-            _ => tile,
-        };
-        if self.is_aka() { ret.akaize() } else { ret }
-    }
-
     /// `Ordering::Equal` iff `self == other`
     #[inline]
     #[must_use]

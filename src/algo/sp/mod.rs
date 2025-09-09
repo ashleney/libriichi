@@ -31,7 +31,7 @@ mod tile;
 
 pub use calc::SPCalculator;
 pub use candidate::{Candidate, CandidateColumn};
-pub use state::InitState;
+pub use state::{InitState, SPOptions};
 pub use tile::RequiredTile;
 
 /// In practice, the max number of tsumos left should be 17, since the first

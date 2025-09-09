@@ -184,35 +184,25 @@ impl Event {
         )
     }
 
-    pub fn augment(&mut self) {
-        const fn swap_tile(t: &mut Tile) {
-            *t = t.augment();
-        }
-
+    pub fn to_mortal_string(&self) -> String {
         match self {
-            Self::StartKyoku {
-                bakaze,
-                dora_marker,
-                tehais,
-                ..
-            } => {
-                swap_tile(bakaze);
-                swap_tile(dora_marker);
-                tehais.iter_mut().flatten().for_each(swap_tile);
+            Self::Dahai { pai, .. } => pai.to_string(),
+            Self::None => "pass".to_owned(),
+            Self::Chi { pai, consumed, .. } => {
+                if pai.next() == consumed[0] {
+                    "chi_low".to_owned()
+                } else if consumed[1] == pai.prev() {
+                    "chi_high".to_owned()
+                } else {
+                    "chi_mid".to_owned()
+                }
             }
-            Self::Tsumo { pai, .. } | Self::Dahai { pai, .. } => swap_tile(pai),
-            Self::Chi { pai, consumed, .. } | Self::Pon { pai, consumed, .. } => {
-                swap_tile(pai);
-                consumed.iter_mut().for_each(swap_tile);
-            }
-            Self::Daiminkan { pai, consumed, .. } | Self::Kakan { pai, consumed, .. } => {
-                swap_tile(pai);
-                consumed.iter_mut().for_each(swap_tile);
-            }
-            Self::Ankan { consumed, .. } => consumed.iter_mut().for_each(swap_tile),
-            Self::Dora { dora_marker } => swap_tile(dora_marker),
-            Self::Hora { ura_markers, .. } => ura_markers.iter_mut().flatten().for_each(swap_tile),
-            _ => (),
+            Self::Pon { .. } => "pon".to_owned(),
+            Self::Daiminkan { .. } | Self::Kakan { .. } | Self::Ankan { .. } => "kan".to_owned(),
+            Self::Reach { .. } => "reach".to_owned(),
+            Self::Hora { .. } => "hora".to_owned(),
+            Self::Ryukyoku { .. } => "ryukyoku".to_owned(),
+            _ => String::new(),
         }
     }
 }
