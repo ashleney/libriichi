@@ -11,18 +11,10 @@ use flate2::read::GzDecoder;
 const JIHAI_TABLE_SIZE: usize = 78_032;
 const SUHAI_TABLE_SIZE: usize = 1_940_777;
 
-static JIHAI_TABLE: LazyLock<Vec<[u8; 10]>> = LazyLock::new(|| {
-    read_table(
-        include_bytes!("data/shanten_jihai.bin.gz"),
-        JIHAI_TABLE_SIZE,
-    )
-});
-static SUHAI_TABLE: LazyLock<Vec<[u8; 10]>> = LazyLock::new(|| {
-    read_table(
-        include_bytes!("data/shanten_suhai.bin.gz"),
-        SUHAI_TABLE_SIZE,
-    )
-});
+static JIHAI_TABLE: LazyLock<Vec<[u8; 10]>> =
+    LazyLock::new(|| read_table(include_bytes!("data/shanten_jihai.bin.gz"), JIHAI_TABLE_SIZE));
+static SUHAI_TABLE: LazyLock<Vec<[u8; 10]>> =
+    LazyLock::new(|| read_table(include_bytes!("data/shanten_suhai.bin.gz"), SUHAI_TABLE_SIZE));
 
 fn read_table(gzipped: &[u8], length: usize) -> Vec<[u8; 10]> {
     let mut gz = GzDecoder::new(gzipped);
@@ -88,10 +80,7 @@ fn sum_tiles(tiles: &[u8]) -> usize {
 pub fn calc_normal(tiles: &[u8; 34], len_div3: u8) -> i8 {
     let len_div3 = len_div3 as usize;
 
-    let mut ret = SUHAI_TABLE
-        .get(sum_tiles(&tiles[..9]))
-        .copied()
-        .unwrap_or_default();
+    let mut ret = SUHAI_TABLE.get(sum_tiles(&tiles[..9])).copied().unwrap_or_default();
     add_suhai(&mut ret, sum_tiles(&tiles[9..2 * 9]), len_div3);
     add_suhai(&mut ret, sum_tiles(&tiles[2 * 9..3 * 9]), len_div3);
     add_jihai(&mut ret, sum_tiles(&tiles[3 * 9..]), len_div3);

@@ -1,4 +1,4 @@
-use crate::tile::Tile;
+use crate::{chi_type::ChiType, tile::Tile};
 use std::error::Error;
 use std::fmt;
 
@@ -178,25 +178,18 @@ impl Event {
     #[inline]
     #[must_use]
     pub const fn is_in_game_announce(&self) -> bool {
-        matches!(
-            self,
-            Self::ReachAccepted { .. } | Self::Dora { .. } | Self::Hora { .. }
-        )
+        matches!(self, Self::ReachAccepted { .. } | Self::Dora { .. } | Self::Hora { .. })
     }
 
     pub fn to_mortal_string(&self) -> String {
         match self {
             Self::Dahai { pai, .. } => pai.to_string(),
             Self::None => "pass".to_owned(),
-            Self::Chi { pai, consumed, .. } => {
-                if pai.next() == consumed[0] {
-                    "chi_low".to_owned()
-                } else if consumed[1] == pai.prev() {
-                    "chi_high".to_owned()
-                } else {
-                    "chi_mid".to_owned()
-                }
-            }
+            Self::Chi { pai, consumed, .. } => match ChiType::new(*consumed, *pai) {
+                ChiType::Low => "chi_low".to_owned(),
+                ChiType::Mid => "chi_mid".to_owned(),
+                ChiType::High => "chi_high".to_owned(),
+            },
             Self::Pon { .. } => "pon".to_owned(),
             Self::Daiminkan { .. } | Self::Kakan { .. } | Self::Ankan { .. } => "kan".to_owned(),
             Self::Reach { .. } => "reach".to_owned(),

@@ -84,11 +84,7 @@ impl PlayerState {
         };
 
         if let Some(actor) = action.actor() {
-            ensure!(
-                actor == self.player_id,
-                "actor is {actor}, not self ({})",
-                self.player_id,
-            );
+            ensure!(actor == self.player_id, "actor is {actor}, not self ({})", self.player_id,);
         } else {
             bail!("action does not have actor and is not ryukyoku");
         }
@@ -160,10 +156,7 @@ impl PlayerState {
             }
             Event::Kakan { pai, .. } => {
                 ensure!(cans.can_kakan, "cannot kakan");
-                ensure!(
-                    self.kakan_candidates.contains(&pai.deaka()),
-                    "cannot kakan {pai}",
-                );
+                ensure!(self.kakan_candidates.contains(&pai.deaka()), "cannot kakan {pai}",);
                 self.ensure_tiles_in_hand(&[pai])?;
             }
             Event::Ankan { consumed, .. } => {
@@ -191,15 +184,9 @@ impl PlayerState {
 
     fn ensure_tiles_in_hand(&self, tiles: &[Tile]) -> Result<()> {
         for &tile in tiles {
-            ensure!(
-                self.tehai[tile.deaka().as_usize()] > 0,
-                "{tile} is not in hand",
-            );
+            ensure!(self.tehai[tile.deaka().as_usize()] > 0, "{tile} is not in hand",);
             if tile.is_aka() {
-                ensure!(
-                    self.akas_in_hand[tile.as_usize() - tuz!(5mr)],
-                    "{tile} is not in hand",
-                );
+                ensure!(self.akas_in_hand[tile.as_usize() - tuz!(5mr)], "{tile} is not in hand",);
             }
         }
         Ok(())

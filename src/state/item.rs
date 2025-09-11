@@ -41,11 +41,7 @@ impl fmt::Display for Sutehai {
 
 impl fmt::Display for ChiPon {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "({}{}+{})",
-            self.consumed[0], self.consumed[1], self.target_tile,
-        )
+        write!(f, "({}{}+{})", self.consumed[0], self.consumed[1], self.target_tile,)
     }
 }
 

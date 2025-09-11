@@ -1,7 +1,7 @@
 use super::PlayerState;
 use super::action::ActionCandidate;
 use super::item::{ChiPon, KawaItem, Sutehai};
-use crate::algo::agari::{self, AgariCalculator};
+use crate::algo::agari::calc::{AgariCalculator, check_ankan_after_riichi};
 use crate::algo::shanten;
 use crate::mjai::Event;
 use crate::tile::Tile;
@@ -28,20 +28,12 @@ impl PlayerState {
     /// events will keep `self.last_cans`, `self.ankan_candidates` and
     /// `self.kakan_candidates` unchanged from the last update. Currently
     /// setting it to true is only useful in validate_logs.
-    pub fn update_with_keep_cans(
-        &mut self,
-        event: &Event,
-        keep_cans_on_announce: bool,
-    ) -> Result<ActionCandidate> {
+    pub fn update_with_keep_cans(&mut self, event: &Event, keep_cans_on_announce: bool) -> Result<ActionCandidate> {
         self.update_inner(event, keep_cans_on_announce)
             .with_context(|| format!("on event {event:?}"))
     }
 
-    fn update_inner(
-        &mut self,
-        event: &Event,
-        keep_cans_on_announce: bool,
-    ) -> Result<ActionCandidate> {
+    fn update_inner(&mut self, event: &Event, keep_cans_on_announce: bool) -> Result<ActionCandidate> {
         if !keep_cans_on_announce || !event.is_in_game_announce() {
             self.last_cans = ActionCandidate {
                 target_actor: event.actor().unwrap_or(self.player_id),
@@ -68,29 +60,13 @@ impl PlayerState {
                 oya,
                 scores,
                 tehais,
-            } => self.start_kyoku(
-                bakaze,
-                dora_marker,
-                kyoku,
-                honba,
-                kyotaku,
-                oya,
-                scores,
-                tehais,
-            )?,
+            } => self.start_kyoku(bakaze, dora_marker, kyoku, honba, kyotaku, oya, scores, tehais)?,
 
             Event::Tsumo { actor, pai } => self.tsumo(actor, pai)?,
-            Event::Dahai {
-                actor,
-                pai,
-                tsumogiri,
-            } => self.dahai(actor, pai, tsumogiri)?,
+            Event::Dahai { actor, pai, tsumogiri } => self.dahai(actor, pai, tsumogiri)?,
 
             Event::Chi {
-                actor,
-                pai,
-                consumed,
-                ..
+                actor, pai, consumed, ..
             } => self.chi(actor, pai, consumed)?,
 
             Event::Pon {
@@ -216,10 +192,7 @@ impl PlayerState {
     }
 
     fn tsumo(&mut self, actor: u8, pai: Tile) -> Result<()> {
-        ensure!(
-            self.tiles_left > 0,
-            "rule violation: attempt to tsumo from exhausted yama",
-        );
+        ensure!(self.tiles_left > 0, "rule violation: attempt to tsumo from exhausted yama",);
         self.tiles_left -= 1;
         if actor != self.player_id {
             return Ok(());
@@ -273,8 +246,7 @@ impl PlayerState {
         if self.riichi_accepted[0] {
             if self.kans_on_board < 4 {
                 // Using Tenhou rule here.
-                self.last_cans.can_ankan =
-                    agari::check_ankan_after_riichi(&self.tehai, self.tehai_len_div3, pai, false);
+                self.last_cans.can_ankan = check_ankan_after_riichi(&self.tehai, self.tehai_len_div3, pai, false);
                 if self.last_cans.can_ankan {
                     self.ankan_candidates.push(pai.deaka());
                 }
@@ -419,8 +391,7 @@ impl PlayerState {
             self.set_can_chi_from_tile(pai);
         }
         self.last_cans.can_pon = self.tehai[pai.deaka().as_usize()] >= 2;
-        self.last_cans.can_daiminkan =
-            self.kans_on_board < 4 && self.tehai[pai.deaka().as_usize()] == 3;
+        self.last_cans.can_daiminkan = self.kans_on_board < 4 && self.tehai[pai.deaka().as_usize()] == 3;
 
         Ok(())
     }
@@ -692,17 +663,11 @@ impl PlayerState {
     ///
     /// Returns an error if we have already witnessed 4 such tiles.
     pub fn witness_tile(&mut self, tile: Tile) -> Result<()> {
-        ensure!(
-            !tile.is_unknown(),
-            "rule violation: attempt to witness an unknown tile",
-        );
+        ensure!(!tile.is_unknown(), "rule violation: attempt to witness an unknown tile",);
         let tile_id = tile.deaka().as_usize();
 
         let seen = &mut self.tiles_seen[tile_id];
-        ensure!(
-            *seen < 4,
-            "rule violation: attempt to witness the fifth {tile}",
-        );
+        ensure!(*seen < 4, "rule violation: attempt to witness the fifth {tile}",);
         *seen += 1;
 
         self.doras_seen += self.dora_factor[tile_id];
@@ -738,18 +703,12 @@ impl PlayerState {
                 self.doras_owned[0] += self.dora_factor[tile_id];
             }
             MoveType::Discard => {
-                ensure!(
-                    *tehai_tile > 0,
-                    "rule violation: attempt to discard {tile} from void",
-                );
+                ensure!(*tehai_tile > 0, "rule violation: attempt to discard {tile} from void",);
                 *tehai_tile -= 1;
                 self.doras_owned[0] -= self.dora_factor[tile_id];
             }
             MoveType::FuuroConsume => {
-                ensure!(
-                    *tehai_tile > 0,
-                    "rule violation: attempt to consume {tile} from void",
-                );
+                ensure!(*tehai_tile > 0, "rule violation: attempt to consume {tile} from void",);
                 *tehai_tile -= 1;
             }
         }
@@ -791,11 +750,7 @@ impl PlayerState {
 
         // Count new dora in everyone's fuuro
         for i in 0..4 {
-            self.doras_owned[i] += self.fuuro_overview[i]
-                .iter()
-                .flatten()
-                .filter(|t| t.deaka() == next)
-                .count() as u8;
+            self.doras_owned[i] += self.fuuro_overview[i].iter().flatten().filter(|t| t.deaka() == next).count() as u8;
             if self.ankan_overview[i].contains(&next) {
                 self.doras_owned[i] += 4;
             }
@@ -816,10 +771,7 @@ impl PlayerState {
     }
 
     pub fn pad_kawa_at_start(&mut self) {
-        self.kawa
-            .iter_mut()
-            .take(self.oya as usize)
-            .for_each(|kawa| kawa.push(None));
+        self.kawa.iter_mut().take(self.oya as usize).for_each(|kawa| kawa.push(None));
     }
 
     pub fn set_can_chi_from_tile(&mut self, tile: Tile) {
@@ -843,10 +795,7 @@ impl PlayerState {
             self.last_cans.can_chi_low = tehai_after.iter().any(|&t| t > 0);
         }
 
-        if matches!(literal_num, 2..=8)
-            && self.tehai[tile_id - 1] > 0
-            && self.tehai[tile_id + 1] > 0
-        {
+        if matches!(literal_num, 2..=8) && self.tehai[tile_id - 1] > 0 && self.tehai[tile_id + 1] > 0 {
             let mut tehai_after = self.tehai;
             tehai_after[tile_id] = 0;
             tehai_after[tile_id - 1] -= 1;
@@ -969,9 +918,6 @@ impl PlayerState {
         };
         let mut player_by_rank = [0, 1, 2, 3];
         player_by_rank.sort_by_key(|&i| -scores_abs[i as usize]);
-        player_by_rank
-            .iter()
-            .position(|&player| player == self.player_id)
-            .unwrap() as u8
+        player_by_rank.iter().position(|&player| player == self.player_id).unwrap() as u8
     }
 }

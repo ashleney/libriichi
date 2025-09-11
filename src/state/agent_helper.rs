@@ -1,8 +1,9 @@
-use super::{PlayerState, SinglePlayerTables};
-use crate::algo::agari::{Agari, AgariCalculator, AgariNames};
+use super::PlayerState;
+use crate::algo::agari::calc::{Agari, AgariCalculator, AgariWithYaku};
+use crate::algo::agari::yaku::yaku;
 use crate::algo::point::Point;
 use crate::algo::shanten;
-use crate::algo::sp::{InitState, SPCalculator, SPOptions};
+use crate::algo::sp::{Candidate, InitState, SPCalculator, SPOptions};
 use crate::mjai::Event;
 use crate::tile::Tile;
 use crate::vec_ops::vec_add_assign;
@@ -39,9 +40,7 @@ impl PlayerState {
         let mut ret = [false; 37];
 
         if self.riichi_accepted[0] {
-            let last_self_tsumo = self
-                .last_self_tsumo
-                .expect("riichi accepted without last self tsumo");
+            let last_self_tsumo = self.last_self_tsumo.expect("riichi accepted without last self tsumo");
             ret[last_self_tsumo.as_usize()] = true;
             return ret;
         }
@@ -264,10 +263,7 @@ impl PlayerState {
         if !self.last_cans.can_agari() {
             return false;
         }
-        self.rule_based_agari_slow(
-            self.last_cans.can_ron_agari,
-            self.rel(self.last_cans.target_actor),
-        )
+        self.rule_based_agari_slow(self.last_cans.can_ron_agari, self.rel(self.last_cans.target_actor))
     }
 
     fn rule_based_agari_slow(&self, is_ron: bool, target_rel: usize) -> bool {
@@ -296,11 +292,7 @@ impl PlayerState {
                 tehai_full[t.as_usize()] += 4;
             }
 
-            let mut tehai_ordered_by_count: Vec<_> = tehai_full
-                .iter()
-                .enumerate()
-                .filter(|&(_, &c)| c > 0)
-                .collect();
+            let mut tehai_ordered_by_count: Vec<_> = tehai_full.iter().enumerate().filter(|&(_, &c)| c > 0).collect();
             tehai_ordered_by_count.sort_unstable_by(|(_, l), (_, r)| r.cmp(l));
 
             // Try possible uradoras one by one, starting from the most valuable one
@@ -333,25 +325,18 @@ impl PlayerState {
         // Calculate the best post-hora situation for us.
         let mut exp_scores = self.scores;
         if is_ron {
-            exp_scores[0] +=
-                max_win_point.ron + self.kyotaku as i32 * 1000 + self.honba as i32 * 300;
+            exp_scores[0] += max_win_point.ron + self.kyotaku as i32 * 1000 + self.honba as i32 * 300;
             exp_scores[target_rel] -= max_win_point.ron + self.honba as i32 * 300;
         } else {
             // The player must be ko here.
-            exp_scores[0] += max_win_point.tsumo_total(false)
-                + self.kyotaku as i32 * 1000
-                + self.honba as i32 * 300;
-            exp_scores
-                .iter_mut()
-                .enumerate()
-                .skip(1)
-                .for_each(|(idx, s)| {
-                    if idx as u8 == self.oya {
-                        *s -= max_win_point.tsumo_oya + self.honba as i32 * 100;
-                    } else {
-                        *s -= max_win_point.tsumo_ko + self.honba as i32 * 100;
-                    }
-                });
+            exp_scores[0] += max_win_point.tsumo_total(false) + self.kyotaku as i32 * 1000 + self.honba as i32 * 300;
+            exp_scores.iter_mut().enumerate().skip(1).for_each(|(idx, s)| {
+                if idx as u8 == self.oya {
+                    *s -= max_win_point.tsumo_oya + self.honba as i32 * 100;
+                } else {
+                    *s -= max_win_point.tsumo_ko + self.honba as i32 * 100;
+                }
+            });
         }
 
         // The prerequisite `!(self.bakaze == t!(W) && self.kyoku == 3)` has
@@ -376,24 +361,15 @@ impl PlayerState {
     ///
     /// `ura_indicators` is used only when the actor has an accepted riichi.
     pub fn agari_points(&self, is_ron: bool, ura_indicators: &[Tile]) -> Result<Point> {
-        let winning_tile = if is_ron {
-            self.last_kawa_tile
-        } else {
-            self.last_self_tsumo
-        }
-        .context("cannot find the winning tile")?;
+        let winning_tile =
+            if is_ron { self.last_kawa_tile } else { self.last_self_tsumo }.context("cannot find the winning tile")?;
         let agari = self
             .calculate_agari(winning_tile, is_ron, ura_indicators)?
             .context("not a hora hand")?;
         Ok(agari.agari.point(self.oya == 0))
     }
 
-    pub fn calculate_agari(
-        &self,
-        winning_tile: Tile,
-        is_ron: bool,
-        ura_indicators: &[Tile],
-    ) -> Result<Option<AgariNames>> {
+    pub fn calculate_agari(&self, winning_tile: Tile, is_ron: bool, ura_indicators: &[Tile]) -> Result<Option<AgariWithYaku>> {
         ensure!(
             is_ron && self.last_cans.can_ron_agari || self.last_cans.can_tsumo_agari,
             "cannot agari"
@@ -402,28 +378,28 @@ impl PlayerState {
         // Here, 天和 and 地和 are handled individually as special cases, and
         // there is no multi yakuman for these two.
         if !is_ron && self.can_w_riichi {
-            return Ok(Some(AgariNames {
+            return Ok(Some(AgariWithYaku {
                 agari: Agari::Yakuman(1),
-                yakus: vec![if self.is_oya() { "天和" } else { "地和" }],
+                yaku: vec![if self.is_oya() { yaku!("天和") } else { yaku!("地和") }],
                 dora: 0,
                 aka_dora: 0,
                 ura_dora: 0,
             }));
         }
 
-        let mut additional_names = vec![];
+        let mut additional_yaku = vec![];
         let additional_hans = if is_ron {
             [
-                (self.riichi_accepted[0], "立直"),
-                (self.is_w_riichi, "ダブル立直"),
-                (self.at_ippatsu, "一发"),
-                (self.tiles_left == 0, "河底撈魚"),
-                (self.chankan_chance.is_some(), "槍槓"),
+                (self.riichi_accepted[0], yaku!("立直")),
+                (self.is_w_riichi, yaku!("ダブル立直")),
+                (self.at_ippatsu, yaku!("一発")),
+                (self.tiles_left == 0, yaku!("河底撈魚")),
+                (self.chankan_chance.is_some(), yaku!("槍槓")),
             ]
             .iter()
             .map(|&(b, n)| {
                 if b {
-                    additional_names.push(n);
+                    additional_yaku.push(n);
                     1
                 } else {
                     0
@@ -432,17 +408,17 @@ impl PlayerState {
             .sum::<u8>()
         } else {
             [
-                (self.riichi_accepted[0], "立直"),
-                (self.is_w_riichi, "ダブル立直"),
-                (self.at_ippatsu, "一发"),
-                (self.is_menzen, "門前清自摸和"),
-                (self.tiles_left == 0 && !self.at_rinshan, "海底摸月"),
-                (self.at_rinshan, "嶺上開花"),
+                (self.riichi_accepted[0], yaku!("立直")),
+                (self.is_w_riichi, yaku!("ダブル立直")),
+                (self.at_ippatsu, yaku!("一発")),
+                (self.is_menzen, yaku!("門前清自摸和")),
+                (self.tiles_left == 0 && !self.at_rinshan, yaku!("海底摸月")),
+                (self.at_rinshan, yaku!("嶺上開花")),
             ]
             .iter()
             .map(|&(b, n)| {
                 if b {
-                    additional_names.push(n);
+                    additional_yaku.push(n);
                     1
                 } else {
                     0
@@ -491,13 +467,13 @@ impl PlayerState {
             is_ron,
         };
         let agari_names = agari_calc
-            .agari_with_names(additional_hans, doras_owned + akas_owned + ura_doras_owned)
-            .map(|mut agari_names| {
-                agari_names.yakus.extend(additional_names);
-                agari_names.dora = doras_owned;
-                agari_names.aka_dora = akas_owned;
-                agari_names.ura_dora = ura_doras_owned;
-                agari_names
+            .agari_with_yaku(additional_hans, doras_owned + akas_owned + ura_doras_owned)
+            .map(|mut agari| {
+                agari.yaku.extend(additional_yaku);
+                agari.dora = doras_owned;
+                agari.aka_dora = akas_owned;
+                agari.ura_dora = ura_doras_owned;
+                agari
             });
 
         Ok(agari_names)
@@ -524,11 +500,7 @@ impl PlayerState {
 
         if let Some(tile) = self.last_self_tsumo {
             // 3n+2, tenpai after tsumo.
-            return if self.waits[tile.deaka().as_usize()] {
-                -1
-            } else {
-                0
-            };
+            return if self.waits[tile.deaka().as_usize()] { -1 } else { 0 };
         }
 
         // 3n+2, tenpai after chi or pon. `self.shanten` is 0, but the actual
@@ -548,7 +520,7 @@ impl PlayerState {
     /// be >= 0 and `self.tiles_left` must be >= 4.
     ///
     /// This function is currently highly internal.
-    pub fn single_player_tables(&self, options: &SPOptions) -> Result<SinglePlayerTables> {
+    pub fn single_player_tables(&self, options: &SPOptions) -> Result<Vec<Candidate>> {
         ensure!(self.tiles_left >= 4, "need at least one more tsumo");
 
         let cur_shanten = self.real_time_shanten();
@@ -561,21 +533,14 @@ impl PlayerState {
             let target = self.rel(self.last_cans.target_actor) as u8;
             // Let's just ignore chankan here.
             let tiles_left_at_next_tsumo = self.tiles_left.saturating_sub(4 - target);
-            (
-                tiles_left_at_next_tsumo / 4,
-                tiles_left_at_next_tsumo % 4 == 0,
-            )
+            (tiles_left_at_next_tsumo / 4, tiles_left_at_next_tsumo % 4 == 0)
         };
         ensure!(tsumos_left >= 1, "need at least one more tsumo");
 
         let num_doras_in_fuuro = if self.is_menzen && self.ankan_overview[0].is_empty() {
             0
         } else {
-            let num_doras_in_tehai: u8 = self
-                .dora_indicators
-                .iter()
-                .map(|ind| self.tehai[ind.next().as_usize()])
-                .sum();
+            let num_doras_in_tehai: u8 = self.dora_indicators.iter().map(|ind| self.tehai[ind.next().as_usize()]).sum();
             let num_akas = self.akas_in_hand.iter().filter(|&&b| b).count() as u8;
             self.doras_owned[0] - num_doras_in_tehai - num_akas
         };
@@ -632,7 +597,9 @@ impl PlayerState {
             max_ev_table[0].tile = self.last_self_tsumo.unwrap();
         }
 
-        Ok(SinglePlayerTables { max_ev_table })
+        max_ev_table.retain(|candidate| candidate.tile.is_unknown() || !self.forbidden_tiles[candidate.tile.deaka().as_usize()]);
+
+        Ok(max_ev_table)
     }
 
     /// Possible actionable events for the current state, excluding dahai
@@ -640,9 +607,7 @@ impl PlayerState {
         let mut events: Vec<Event> = vec![];
 
         if self.last_cans.can_riichi {
-            events.push(Event::Reach {
-                actor: self.player_id,
-            });
+            events.push(Event::Reach { actor: self.player_id });
         }
         if self.last_cans.can_chi_low {
             let pai = self.last_kawa_tile.unwrap();
@@ -772,10 +737,8 @@ impl PlayerState {
         events
     }
 
-    pub fn single_player_tables_after_actions(
-        self,
-        options: &SPOptions,
-    ) -> Vec<(Option<Event>, Result<SinglePlayerTables>)> {
+    /// Single player tables after possible actionable events
+    pub fn single_player_tables_after_actions(&self, options: &SPOptions) -> Vec<(Option<Event>, Result<Vec<Candidate>>)> {
         let mut tables = vec![];
         if self.last_cans.can_riichi {
             // if can_riichi then no action is equivalent to an explicit deny of riichi
@@ -791,5 +754,50 @@ impl PlayerState {
             tables.push((Some(event), state.single_player_tables(options)));
         }
         tables
+    }
+
+    /// Single player tables for every possible event including dahai
+    /// If candidates cannot be calculated for an event that we can do, they will be None
+    pub fn single_player_tables_for_events(&self, options: &SPOptions) -> Vec<(Event, Option<Candidate>)> {
+        let mut table = vec![];
+        for (event, candidates) in self.single_player_tables_after_actions(options) {
+            if let Some(event) = event {
+                let candidate = candidates.ok().and_then(|candidates| {
+                    candidates.into_iter().next().map(|mut candidate| {
+                        candidate.tile = t!(?);
+                        candidate
+                    })
+                });
+                table.push((event, candidate));
+            } else if let Ok(candidates) = candidates {
+                for candidate in candidates {
+                    table.push((
+                        Event::Dahai {
+                            actor: self.player_id,
+                            pai: candidate.tile,
+                            tsumogiri: Some(candidate.tile) == self.last_self_tsumo,
+                        },
+                        Some(candidate),
+                    ));
+                }
+            } else {
+                // TODO: Candidates after furiten
+                for (tile, discard_candidate) in self.discard_candidates_aka().iter().enumerate() {
+                    if *discard_candidate {
+                        let tile = must_tile!(tile);
+                        table.push((
+                            Event::Dahai {
+                                actor: self.player_id,
+                                pai: tile,
+                                tsumogiri: Some(tile) == self.last_self_tsumo,
+                            },
+                            None,
+                        ));
+                    }
+                }
+            }
+        }
+
+        table
     }
 }

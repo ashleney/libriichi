@@ -1,8 +1,9 @@
-use super::candidate::RawCandidate;
+use super::candidate::{RawCandidate, WeightedYaku};
 use super::state::{InitState, State};
 use super::tile::{DiscardTile, DrawTile};
 use super::{Candidate, CandidateColumn, MAX_TSUMOS_LEFT};
-use crate::algo::agari::{Agari, AgariCalculator};
+use crate::algo::agari::calc::{Agari, AgariCalculator};
+use crate::algo::agari::yaku::yaku;
 use crate::tile::Tile;
 use crate::{must_tile, t, tu8};
 use std::rc::Rc;
@@ -22,11 +23,21 @@ struct Values<const MAX_TSUMO: usize> {
     tenpai_probs: [f32; MAX_TSUMO],
     win_probs: [f32; MAX_TSUMO],
     exp_values: [f32; MAX_TSUMO],
+    yaku: [WeightedYaku; MAX_TSUMO],
+}
+
+struct Scores {
+    scores: [f32; 4],
+    yaku: Vec<u8>,
+    dora: u8,
+    aka_dora: u8,
+    /// expected average ura dora
+    ura_dora: f32,
 }
 
 enum ScoresOrValues<const MAX_TSUMO: usize> {
     // shanten == 0, and has yaku
-    Scores([f32; 4]),
+    Scores(Scores),
     // shanten > 0
     Values(Rc<Values<MAX_TSUMO>>),
 }
@@ -75,20 +86,11 @@ impl SPCalculator<'_> {
     /// - cur_shanten: must be >= 0.
     ///
     /// The return value will be sorted and index 0 will be the best choice.
-    pub fn calc(
-        &self,
-        init_state: InitState,
-        can_discard: bool,
-        tsumos_left: u8,
-        cur_shanten: i8,
-    ) -> Result<Vec<Candidate>> {
+    pub fn calc(&self, init_state: InitState, can_discard: bool, tsumos_left: u8, cur_shanten: i8) -> Result<Vec<Candidate>> {
         ensure!(cur_shanten >= 0, "can't calculate an agari hand");
         ensure!(tsumos_left >= 1, "need at least one more tsumo");
         ensure!(tsumos_left <= MAX_TSUMOS_LEFT as u8);
-        ensure!(
-            self.max_shanten <= 5,
-            "cannot reasonably calculate 6-shanten hands"
-        );
+        ensure!(self.max_shanten <= 5, "cannot reasonably calculate 6-shanten hands");
 
         let max_tsumo = tsumos_left as usize;
 
@@ -135,9 +137,7 @@ fn build_tsumo_prob_table<const MAX_TSUMO: usize>(n_left_tiles: usize) -> [[f32;
     table
 }
 
-fn build_not_tsumo_prob_table<const MAX_TSUMO: usize>(
-    n_left_tiles: usize,
-) -> [[f32; MAX_TSUMO]; MAX_TILES_LEFT + 1] {
+fn build_not_tsumo_prob_table<const MAX_TSUMO: usize>(n_left_tiles: usize) -> [[f32; MAX_TSUMO]; MAX_TILES_LEFT + 1] {
     let mut table = [[0.; MAX_TSUMO]; MAX_TILES_LEFT + 1];
     // 有効牌の合計枚数ごとに、これまでの巡目で有効牌が引けなかった確率のテーブルを作成する。
     // not_tumo_prob_table_[i][j] = 有効牌の合計枚数が i 枚の場合に j - 1 巡目までに有効牌が引けなかった確率
@@ -192,9 +192,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
 
     fn analyze_discard(&mut self, shanten: i8) -> Vec<Candidate> {
         // 打牌候補を取得する。
-        let discard_tiles = self
-            .state
-            .get_discard_tiles(shanten, self.sup.tehai_len_div3);
+        let discard_tiles = self.state.get_discard_tiles(shanten, self.sup.tehai_len_div3);
 
         let mut candidates = Vec::with_capacity(discard_tiles.len());
         for DiscardTile { tile, shanten_diff } in discard_tiles {
@@ -217,6 +215,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
                     exp_values: &values.exp_values,
                     required_tiles,
                     shanten_down: false,
+                    yaku: &values.yaku,
                 });
                 candidates.push(candidate);
             } else if let Some(shanten_down_max) = self.sup.calc_shanten_down
@@ -237,6 +236,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
                     exp_values: &values.exp_values,
                     required_tiles,
                     shanten_down: true,
+                    yaku: &values.yaku,
                 });
                 candidates.push(candidate);
             }
@@ -261,15 +261,14 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
             exp_values: &values.exp_values,
             required_tiles,
             shanten_down: false,
+            yaku: &values.yaku,
         });
         vec![candidate]
     }
 
     fn analyze_discard_simple(&mut self, shanten: i8) -> Vec<Candidate> {
         // 打牌候補を取得する。
-        let discard_tiles = self
-            .state
-            .get_discard_tiles(shanten, self.sup.tehai_len_div3);
+        let discard_tiles = self.state.get_discard_tiles(shanten, self.sup.tehai_len_div3);
         discard_tiles
             .into_iter()
             .map(|DiscardTile { tile, shanten_diff }| {
@@ -320,6 +319,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
         let mut tenpai_probs = [0.; MAX_TSUMO];
         let mut win_probs = [0.; MAX_TSUMO];
         let mut exp_values = [0.; MAX_TSUMO];
+        let mut yaku = [WeightedYaku::default(); MAX_TSUMO];
 
         // 自摸候補を取得する。
         let draw_tiles = self.state.get_draw_tiles(shanten, self.sup.tehai_len_div3);
@@ -367,17 +367,24 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
                         let assume_riichi = self.sup.is_menzen && self.sup.prefer_riichi;
                         // 聴牌の場合は次で和了
                         // i 巡目で聴牌の場合はダブル立直成立
-                        let win_double_riichi =
-                            assume_riichi && self.sup.calc_double_riichi && i == 0;
+                        let win_double_riichi = assume_riichi && self.sup.calc_double_riichi && i == 0;
                         // i 巡目で聴牌し、次の巡目で和了の場合は一発成立
                         let win_ippatsu = assume_riichi;
                         // 最後の巡目で和了の場合は海底撈月成立
                         let win_haitei = self.sup.calc_haitei && i == MAX_TSUMO - 1;
-                        let han_plus =
-                            win_double_riichi as usize + win_ippatsu as usize + win_haitei as usize;
+                        let han_plus = win_double_riichi as usize + win_ippatsu as usize + win_haitei as usize;
 
                         win_probs[i] += tump_prob;
-                        exp_values[i] += tump_prob * scores[han_plus];
+                        exp_values[i] += tump_prob * scores.scores[han_plus];
+                        yaku[i] += WeightedYaku::from_score(
+                            &scores.yaku,
+                            scores.dora,
+                            scores.aka_dora,
+                            scores.ura_dora,
+                            win_double_riichi,
+                            win_ippatsu,
+                            win_haitei,
+                        ) * tump_prob;
                     }
                     ScoresOrValues::Values(next_values) => {
                         if shanten == 1 {
@@ -390,6 +397,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
                             }
                             win_probs[i] += tump_prob * next_values.win_probs[i + 1];
                             exp_values[i] += tump_prob * next_values.exp_values[i + 1];
+                            yaku[i] += next_values.yaku[i + 1] * tump_prob;
                         }
                     }
                 }
@@ -421,6 +429,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
                 tenpai_probs[i] += tump_prob * next_values.tenpai_probs[i + 1];
                 win_probs[i] += tump_prob * next_values.win_probs[i + 1];
                 exp_values[i] += tump_prob * next_values.exp_values[i + 1];
+                yaku[i] += next_values.yaku[i + 1] * tump_prob;
             }
         }
 
@@ -428,6 +437,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
             tenpai_probs,
             win_probs,
             exp_values,
+            yaku,
         });
         self.draw_cache[shanten as usize].insert(self.state.clone(), Rc::clone(&values));
 
@@ -445,16 +455,13 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
         let mut tenpai_probs = [0.; MAX_TSUMO];
         let mut win_probs = [0.; MAX_TSUMO];
         let mut exp_values = [0.; MAX_TSUMO];
+        let mut yaku = [WeightedYaku::default(); MAX_TSUMO];
 
         // 自摸候補を取得する。
         let draw_tiles = self.state.get_draw_tiles(shanten, self.sup.tehai_len_div3);
 
         // 有効牌の合計枚数を計算する。
-        let sum_required_tiles: u8 = draw_tiles
-            .iter()
-            .filter(|d| d.shanten_diff == -1)
-            .map(|d| d.count)
-            .sum();
+        let sum_required_tiles: u8 = draw_tiles.iter().filter(|d| d.shanten_diff == -1).map(|d| d.count).sum();
         let not_tsumo_probs = &self.not_tsumo_prob_table[sum_required_tiles as usize];
 
         for DrawTile {
@@ -507,18 +514,24 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
                             let assume_riichi = self.sup.is_menzen && self.sup.prefer_riichi;
                             // 聴牌の場合は次で和了
                             // i 巡目で聴牌の場合はダブル立直成立
-                            let win_double_riichi =
-                                assume_riichi && self.sup.calc_double_riichi && i == 0;
+                            let win_double_riichi = assume_riichi && self.sup.calc_double_riichi && i == 0;
                             // i 巡目で聴牌し、次の巡目で和了の場合は一発成立
                             let win_ippatsu = assume_riichi && j == i;
                             // 最後の巡目で和了の場合は海底撈月成立
                             let win_haitei = self.sup.calc_haitei && j == MAX_TSUMO - 1;
-                            let han_plus = win_double_riichi as usize
-                                + win_ippatsu as usize
-                                + win_haitei as usize;
+                            let han_plus = win_double_riichi as usize + win_ippatsu as usize + win_haitei as usize;
 
                             win_probs[i] += prob;
-                            exp_values[i] += prob * scores[han_plus];
+                            exp_values[i] += prob * scores.scores[han_plus];
+                            yaku[i] += WeightedYaku::from_score(
+                                &scores.yaku,
+                                scores.dora,
+                                scores.aka_dora,
+                                scores.ura_dora,
+                                win_double_riichi,
+                                win_ippatsu,
+                                win_haitei,
+                            ) * prob;
                         }
                         ScoresOrValues::Values(next_values) => {
                             if shanten == 1 {
@@ -533,6 +546,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
                                 // 聴牌以上で max_tsumo_ - 1 巡目以下の場合
                                 win_probs[i] += prob * next_values.win_probs[j + 1];
                                 exp_values[i] += prob * next_values.exp_values[j + 1];
+                                yaku[i] += next_values.yaku[j + 1] * prob;
                             }
                         }
                     }
@@ -544,6 +558,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
             tenpai_probs,
             win_probs,
             exp_values,
+            yaku,
         });
         self.draw_cache[shanten as usize].insert(self.state.clone(), Rc::clone(&values));
 
@@ -559,9 +574,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
 
     fn discard_slow(&mut self, shanten: i8) -> Rc<Values<MAX_TSUMO>> {
         // 打牌候補を取得する。
-        let discard_tiles = self
-            .state
-            .get_discard_tiles(shanten, self.sup.tehai_len_div3);
+        let discard_tiles = self.state.get_discard_tiles(shanten, self.sup.tehai_len_div3);
 
         // 期待値が最大となる打牌を選択する。
         let mut max_tenpai_probs = [f32::MIN; MAX_TSUMO];
@@ -569,6 +582,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
         let mut max_exp_values = [f32::MIN; MAX_TSUMO];
         let mut max_tiles = [t!(?); MAX_TSUMO];
         let mut max_values = [i32::MIN; MAX_TSUMO];
+        let mut yaku = [WeightedYaku::default(); MAX_TSUMO];
 
         for DiscardTile { tile, shanten_diff } in discard_tiles {
             let values;
@@ -603,15 +617,14 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
                 let max_value = max_values[i];
                 let max_tile = max_tiles[i];
 
-                if value > max_value
-                    || value == max_value && tile.cmp_discard_priority(max_tile).is_gt()
-                {
+                if value > max_value || value == max_value && tile.cmp_discard_priority(max_tile).is_gt() {
                     // 値が同等なら、DiscardPriorities が高い牌を優先して選択する。
                     max_tenpai_probs[i] = values.tenpai_probs[i];
                     max_win_probs[i] = values.win_probs[i];
                     max_exp_values[i] = values.exp_values[i];
                     max_values[i] = value;
                     max_tiles[i] = tile;
+                    yaku[i] = values.yaku[i];
                 }
             }
         }
@@ -620,6 +633,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
             tenpai_probs: max_tenpai_probs,
             win_probs: max_win_probs,
             exp_values: max_exp_values,
+            yaku,
         });
         self.discard_cache[shanten as usize].insert(self.state.clone(), Rc::clone(&values));
 
@@ -627,7 +641,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
     }
 
     /// None: no yaku
-    fn get_score(&self, win_tile: Tile) -> Option<[f32; 4]> {
+    fn get_score(&self, win_tile: Tile) -> Option<Scores> {
         let calc = AgariCalculator {
             tehai: &self.state.tehai,
             is_menzen: self.sup.is_menzen,
@@ -647,22 +661,58 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
             (true, false) => 1,
             (false, _) => 0,
         };
-        let num_doras = self
+        let akas_in_hand = self.state.akas_in_hand.iter().filter(|&&b| b).count() as u8;
+        let doras_in_hand = self
             .sup
             .dora_indicators
             .iter()
             .map(|ind| self.state.tehai[ind.next().as_usize()])
-            .sum::<u8>()
-            + self.state.akas_in_hand.iter().filter(|&&b| b).count() as u8
-            + self.sup.num_doras_in_fuuro;
+            .sum::<u8>();
+        let num_doras = doras_in_hand + akas_in_hand + self.sup.num_doras_in_fuuro;
+
+        // these are only used for human representation
+        let mut tiles_in_fuuro = [0; 34];
+        for &low in self.sup.chis {
+            tiles_in_fuuro[low as usize] += 1;
+            tiles_in_fuuro[low as usize + 1] += 1;
+            tiles_in_fuuro[low as usize + 2] += 1;
+        }
+        for &pai in self.sup.pons {
+            tiles_in_fuuro[pai as usize] += 3;
+        }
+        for &pai in self.sup.minkans.iter().chain(self.sup.ankans) {
+            tiles_in_fuuro[pai as usize] += 4;
+        }
+        let proper_doras_in_fuuro = self
+            .sup
+            .dora_indicators
+            .iter()
+            .map(|ind| tiles_in_fuuro[ind.next().as_usize()])
+            .sum::<u8>();
+        let akas_in_fuuro = self.sup.num_doras_in_fuuro - proper_doras_in_fuuro;
+        let owned_akas = akas_in_hand + akas_in_fuuro;
+        let owned_doras = num_doras - owned_akas;
 
         // Although you can technically win the base hand with just 海底, the
         // original C++ version didn't take this into account and I also agree
         // with that.
-        let (fu, han) = match calc.agari(additional_yakus, num_doras)? {
+        let mut agari_names = calc.agari_with_yaku(additional_yakus, num_doras)?;
+        if self.sup.is_menzen {
+            agari_names.yaku.push(yaku!("門前清自摸和"));
+            if self.sup.prefer_riichi {
+                agari_names.yaku.push(yaku!("立直"));
+            }
+        }
+        let (fu, han) = match agari_names.agari {
             Agari::Normal { fu, han } => (fu, han),
             a @ Agari::Yakuman(_) => {
-                return Some([a.point(is_oya).tsumo_total(is_oya) as f32; 4]);
+                return Some(Scores {
+                    scores: [a.point(is_oya).tsumo_total(is_oya) as f32; 4],
+                    yaku: agari_names.yaku,
+                    dora: owned_doras,
+                    aka_dora: owned_akas,
+                    ura_dora: 0.,
+                });
             }
         };
 
@@ -670,76 +720,86 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
 
         // ダブル立直、一発、海底撈月で最大3翻まで増加するので、
         // ベースとなる点数、+1翻の点数、+2翻の点数、+3翻の点数も計算しておく。
-        let mut scores = [0.; 4];
-
-        let assume_riichi = self.sup.is_menzen && self.sup.prefer_riichi;
-        if assume_riichi && self.sup.dora_indicators.len() == 1 {
-            // 裏ドラ考慮ありかつ表ドラが1枚以上の場合は、厳密に計算する。
-            let mut n_indicators = [0; 5];
-            let mut sum_indicators = 0;
-            for (tid, &count) in self.state.tehai.iter().enumerate() {
-                if count == 0 {
-                    continue;
-                }
-                // ドラ表示牌の枚数を数える。
-                let tile = must_tile!(tid);
-                let ind_count = self.state.tiles_in_wall[tile.prev().as_usize()];
-                n_indicators[count as usize] += ind_count;
-                sum_indicators += ind_count;
-            }
-
-            // 裏ドラの乗る確率を枚数ごとに計算する。
-            let mut uradora_probs = [0.; 5];
-
-            let n_left_tiles = self.state.sum_left_tiles();
-
-            uradora_probs[0] = (n_left_tiles - sum_indicators) as f32 / n_left_tiles as f32;
-            for i in 1..5 {
-                uradora_probs[i] = n_indicators[i] as f32 / n_left_tiles as f32;
-            }
-
-            for (i, s) in scores.iter_mut().enumerate() {
-                // 裏ドラ1枚の場合、最大4翻まで乗る可能性がある
-                for (j, &p) in uradora_probs.iter().enumerate() {
-                    if p == 0. {
+        if self.sup.is_menzen && self.sup.prefer_riichi {
+            let mut scores: [f32; 4] = [0.; 4];
+            let mut expected_uradora = 0.;
+            if self.sup.dora_indicators.len() == 1 {
+                // 裏ドラ考慮ありかつ表ドラが1枚以上の場合は、厳密に計算する。
+                let mut n_indicators = [0; 5];
+                let mut sum_indicators = 0;
+                for (tid, &count) in self.state.tehai.iter().enumerate() {
+                    if count == 0 {
                         continue;
                     }
-                    let agari = Agari::Normal {
-                        fu,
-                        han: han + i as u8 + j as u8,
-                    };
-                    *s += agari.point(is_oya).tsumo_total(is_oya) as f32 * p;
+                    // ドラ表示牌の枚数を数える。
+                    let tile = must_tile!(tid);
+                    let ind_count = self.state.tiles_in_wall[tile.prev().as_usize()];
+                    n_indicators[count as usize] += ind_count;
+                    sum_indicators += ind_count;
                 }
-            }
-        } else if assume_riichi && self.sup.dora_indicators.len() > 1 {
-            // 裏ドラ考慮ありかつ表ドラが2枚以上の場合、統計データを利用する。
-            for (i, s) in scores.iter_mut().enumerate() {
-                for (j, &p) in URADORA_PROB_TABLE[self.sup.dora_indicators.len() - 1]
-                    .iter()
-                    .enumerate()
-                {
-                    if p == 0. {
-                        continue;
+
+                // 裏ドラの乗る確率を枚数ごとに計算する。
+                let mut uradora_probs = [0.; 5];
+
+                let n_left_tiles = self.state.sum_left_tiles();
+
+                uradora_probs[0] = (n_left_tiles - sum_indicators) as f32 / n_left_tiles as f32;
+                for i in 1..5 {
+                    uradora_probs[i] = n_indicators[i] as f32 / n_left_tiles as f32;
+                }
+                for (i, s) in scores.iter_mut().enumerate() {
+                    // 裏ドラ1枚の場合、最大4翻まで乗る可能性がある
+                    for (j, &p) in uradora_probs.iter().enumerate() {
+                        if p == 0. {
+                            continue;
+                        }
+                        let agari = Agari::Normal {
+                            fu,
+                            han: han + i as u8 + j as u8,
+                        };
+                        *s += agari.point(is_oya).tsumo_total(is_oya) as f32 * p;
+                        expected_uradora += j as f32 * p;
                     }
-                    let agari = Agari::Normal {
-                        fu,
-                        han: han + i as u8 + j as u8,
-                    };
-                    *s += agari.point(is_oya).tsumo_total(is_oya) as f32 * p;
                 }
-            }
+            } else {
+                // 裏ドラ考慮ありかつ表ドラが2枚以上の場合、統計データを利用する。
+                for (i, s) in scores.iter_mut().enumerate() {
+                    for (j, &p) in URADORA_PROB_TABLE[self.sup.dora_indicators.len() - 1].iter().enumerate() {
+                        if p == 0. {
+                            continue;
+                        }
+                        let agari = Agari::Normal {
+                            fu,
+                            han: han + i as u8 + j as u8,
+                        };
+                        *s += agari.point(is_oya).tsumo_total(is_oya) as f32 * p;
+                        expected_uradora += j as f32 * p;
+                    }
+                }
+            };
+
+            Some(Scores {
+                scores,
+                yaku: agari_names.yaku,
+                dora: owned_doras,
+                aka_dora: owned_akas,
+                ura_dora: expected_uradora,
+            })
         } else {
+            let mut scores: [f32; 4] = [0.; 4];
             // 裏ドラ考慮なしまたは表ドラが0枚の場合
             for (i, s) in scores.iter_mut().enumerate() {
-                let agari = Agari::Normal {
-                    fu,
-                    han: han + i as u8,
-                };
+                let agari = Agari::Normal { fu, han: han + i as u8 };
                 *s = agari.point(is_oya).tsumo_total(is_oya) as f32;
             }
+            Some(Scores {
+                scores,
+                yaku: agari_names.yaku,
+                dora: owned_doras,
+                aka_dora: owned_akas,
+                ura_dora: 0.,
+            })
         }
-
-        Some(scores)
     }
 }
 
@@ -791,9 +851,7 @@ mod test {
         let can_discard = true;
         let tsumos_left = 8;
         let cur_shanten = CALC_SHANTEN_FN(&tehai, calc.tehai_len_div3);
-        let candidates = calc
-            .calc(state, can_discard, tsumos_left, cur_shanten)
-            .unwrap();
+        let candidates = calc.calc(state, can_discard, tsumos_left, cur_shanten).unwrap();
         assert_eq!(candidates[0].tile, t!(N));
         assert_eq!(candidates[1].tile, t!(W));
         assert!(candidates[0].exp_values > candidates[1].exp_values);
@@ -814,16 +872,12 @@ mod test {
         let can_discard = true;
         let tsumos_left = 15;
         let cur_shanten = CALC_SHANTEN_FN(&tehai, calc.tehai_len_div3);
-        let candidates = calc
-            .calc(state.clone(), can_discard, tsumos_left, cur_shanten)
-            .unwrap();
+        let candidates = calc.calc(state.clone(), can_discard, tsumos_left, cur_shanten).unwrap();
         assert_eq!(candidates[0].tile, t!(9p));
         assert!(candidates[0].shanten_down);
 
         calc.maximize_win_prob = true;
-        let candidates = calc
-            .calc(state, can_discard, tsumos_left, cur_shanten)
-            .unwrap();
+        let candidates = calc.calc(state, can_discard, tsumos_left, cur_shanten).unwrap();
         assert_eq!(candidates[0].tile, t!(3m));
         assert!(!candidates[0].shanten_down);
 
@@ -864,9 +918,7 @@ mod test {
         let can_discard = true;
         let tsumos_left = 15;
         let cur_shanten = CALC_SHANTEN_FN(&tehai, calc.tehai_len_div3);
-        let candidates = calc
-            .calc(state, can_discard, tsumos_left, cur_shanten)
-            .unwrap();
+        let candidates = calc.calc(state, can_discard, tsumos_left, cur_shanten).unwrap();
         let c = &candidates[0];
         assert_eq!(c.tile, t!(2s));
         assert_eq!(c.required_tiles.len(), 17);
@@ -912,9 +964,7 @@ mod test {
         let cur_shanten = CALC_SHANTEN_FN(&tehai, calc.tehai_len_div3);
         let can_discard = true;
         let tsumos_left = 5;
-        let candidates = calc
-            .calc(state, can_discard, tsumos_left, cur_shanten)
-            .unwrap();
+        let candidates = calc.calc(state, can_discard, tsumos_left, cur_shanten).unwrap();
         assert_eq!(candidates.len(), 7);
 
         let c = &candidates[1];
@@ -963,9 +1013,7 @@ mod test {
         let cur_shanten = CALC_SHANTEN_FN(&tehai, calc.tehai_len_div3);
         let can_discard = false;
         let tsumos_left = 5;
-        let candidates = calc
-            .calc(state, can_discard, tsumos_left, cur_shanten)
-            .unwrap();
+        let candidates = calc.calc(state, can_discard, tsumos_left, cur_shanten).unwrap();
         assert_eq!(candidates.len(), 1);
         let c = &candidates[0];
         assert_eq!(c.tile, t!(?));

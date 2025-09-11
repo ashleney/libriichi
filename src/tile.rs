@@ -100,10 +100,7 @@ impl Tile {
     #[inline]
     #[must_use]
     pub const fn is_yaokyuu(self) -> bool {
-        matches_tu8!(
-            self.0,
-            1m | 9m | 1p | 9p | 1s | 9s | E | S | W | N | P | F | C
-        )
+        matches_tu8!(self.0, 1m | 9m | 1p | 9p | 1s | 9s | E | S | W | N | P | F | C)
     }
 
     #[inline]
@@ -216,9 +213,7 @@ impl<'de> Deserialize<'de> for Tile {
     where
         D: Deserializer<'de>,
     {
-        let tile = String::deserialize(deserializer)?
-            .parse()
-            .map_err(serde::de::Error::custom)?;
+        let tile = String::deserialize(deserializer)?.parse().map_err(serde::de::Error::custom)?;
         Ok(tile)
     }
 }

@@ -1,9 +1,23 @@
 use super::MAX_TSUMOS_LEFT;
 use super::tile::RequiredTile;
+use crate::algo::agari::yaku::{YAKU_COUNT, yaku};
 use crate::tile::Tile;
 use std::cmp::Ordering;
+use std::ops::{AddAssign, Mul};
 
 use tinyvec::ArrayVec;
+
+#[derive(Debug, Clone, Copy)]
+pub struct WeightedYaku {
+    /// Indexes of yaku and the chances of winning with them
+    pub yaku: [f32; YAKU_COUNT],
+    /// Average expected amount of dora
+    pub dora: f32,
+    /// Average expected amount of akadora
+    pub aka_dora: f32,
+    /// Average expected amount of uradora
+    pub ura_dora: f32,
+}
 
 #[derive(Debug)]
 pub struct Candidate {
@@ -20,6 +34,8 @@ pub struct Candidate {
     pub num_required_tiles: u8,
     /// 向聴戻しになるかどうか
     pub shanten_down: bool,
+    /// Chances of a hand winning with certain yaku
+    pub yaku: ArrayVec<[WeightedYaku; MAX_TSUMOS_LEFT]>,
 }
 
 #[derive(Default)]
@@ -30,6 +46,7 @@ pub struct RawCandidate<'a> {
     pub exp_values: &'a [f32],
     pub required_tiles: ArrayVec<[RequiredTile; 34]>,
     pub shanten_down: bool,
+    pub yaku: &'a [WeightedYaku],
 }
 
 #[derive(Clone, Copy)]
@@ -51,12 +68,14 @@ impl From<RawCandidate<'_>> for Candidate {
             exp_values,
             required_tiles,
             shanten_down,
+            yaku,
         }: RawCandidate<'_>,
     ) -> Self {
         let num_required_tiles = required_tiles.iter().map(|r| r.count).sum();
         let tenpai_probs = tenpai_probs.iter().map(|p| p.clamp(0., 1.)).collect();
         let win_probs = win_probs.iter().map(|p| p.clamp(0., 1.)).collect();
         let exp_values = exp_values.iter().map(|v| v.max(0.)).collect();
+        let yaku = yaku.iter().copied().collect();
 
         Self {
             tile,
@@ -66,6 +85,7 @@ impl From<RawCandidate<'_>> for Candidate {
             required_tiles,
             num_required_tiles,
             shanten_down,
+            yaku,
         }
     }
 }
@@ -84,23 +104,19 @@ impl Candidate {
                 Ordering::Equal => self.cmp(other, CandidateColumn::TenpaiProb),
                 o => o,
             },
-            CandidateColumn::TenpaiProb => {
-                match self.tenpai_probs[0].total_cmp(&other.tenpai_probs[0]) {
-                    Ordering::Equal => self.cmp(other, CandidateColumn::NotShantenDown),
-                    o => o,
-                }
-            }
+            CandidateColumn::TenpaiProb => match self.tenpai_probs[0].total_cmp(&other.tenpai_probs[0]) {
+                Ordering::Equal => self.cmp(other, CandidateColumn::NotShantenDown),
+                o => o,
+            },
             CandidateColumn::NotShantenDown => match (self.shanten_down, other.shanten_down) {
                 (false, true) => Ordering::Greater,
                 (true, false) => Ordering::Less,
                 _ => self.cmp(other, CandidateColumn::NumRequiredTiles),
             },
-            CandidateColumn::NumRequiredTiles => {
-                match self.num_required_tiles.cmp(&other.num_required_tiles) {
-                    Ordering::Equal => self.cmp(other, CandidateColumn::DiscardPriority),
-                    o => o,
-                }
-            }
+            CandidateColumn::NumRequiredTiles => match self.num_required_tiles.cmp(&other.num_required_tiles) {
+                Ordering::Equal => self.cmp(other, CandidateColumn::DiscardPriority),
+                o => o,
+            },
             CandidateColumn::DiscardPriority => self.tile.cmp_discard_priority(other.tile),
         }
     }
@@ -118,14 +134,7 @@ impl Candidate {
                 "Required tiles",
             ]
         } else {
-            &[
-                "EV",
-                "Win prob",
-                "Tenpai prob",
-                "Kinds",
-                "Sum",
-                "Required tiles",
-            ]
+            &["EV", "Win prob", "Tenpai prob", "Kinds", "Sum", "Required tiles"]
         }
     }
 
@@ -156,6 +165,92 @@ impl Candidate {
                 self.num_required_tiles.to_string(),
                 required_tiles,
             ]
+        }
+    }
+}
+
+impl WeightedYaku {
+    #[inline]
+    pub fn from_score(
+        yaku: &Vec<u8>,
+        dora: u8,
+        aka_dora: u8,
+        ura_dora: f32,
+        win_double_riichi: bool,
+        win_ippatsu: bool,
+        win_haitei: bool,
+    ) -> Self {
+        let mut yaku_array = [0.; YAKU_COUNT];
+        for &y in yaku {
+            yaku_array[y as usize] = 1.;
+        }
+        if win_double_riichi {
+            yaku_array[yaku!("ダブル立直") as usize] = 1.;
+        }
+        if win_ippatsu {
+            yaku_array[yaku!("一発") as usize] = 1.;
+        }
+        if win_haitei {
+            yaku_array[yaku!("海底摸月") as usize] = 1.;
+        }
+        Self {
+            yaku: yaku_array,
+            dora: dora as f32,
+            aka_dora: aka_dora as f32,
+            ura_dora,
+        }
+    }
+}
+
+impl AddAssign<Self> for WeightedYaku {
+    #[inline]
+    fn add_assign(&mut self, other: Self) {
+        for (yaku, prob) in other.yaku.iter().enumerate() {
+            self.yaku[yaku] += prob;
+        }
+        self.dora += other.dora;
+        self.aka_dora += other.aka_dora;
+        self.ura_dora += other.ura_dora;
+    }
+}
+
+impl Mul<f32> for WeightedYaku {
+    type Output = Self;
+
+    #[inline]
+    fn mul(self, prob: f32) -> Self {
+        let mut result = self;
+        for y in &mut result.yaku {
+            *y *= prob;
+        }
+        result.dora *= prob;
+        result.aka_dora *= prob;
+        result.ura_dora *= prob;
+        result
+    }
+}
+
+impl WeightedYaku {
+    /// List of yaku sorted by probability
+    pub fn sorted_yaku(&self) -> Vec<(u8, f32)> {
+        let mut yaku: Vec<_> = self
+            .yaku
+            .iter()
+            .enumerate()
+            .filter_map(|(yaku, &prob)| (prob > 0.).then_some((yaku as u8, prob)))
+            .collect();
+        yaku.sort_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap());
+        yaku
+    }
+}
+
+impl Default for WeightedYaku {
+    fn default() -> Self {
+        Self {
+            yaku: [0.0; YAKU_COUNT],
+            dora: 0.0,
+            aka_dora: 0.0,
+            ura_dora: 0.0,
         }
     }
 }

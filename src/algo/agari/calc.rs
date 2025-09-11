@@ -6,8 +6,9 @@
 //! * Java: <http://hp.vector.co.jp/authors/VA046927/mjscore/AgariIndex.java>
 //! * Algorithm: <http://hp.vector.co.jp/authors/VA046927/mjscore/mjalgorism.html>
 
-use super::point::Point;
-use super::shanten;
+use crate::algo::agari::yaku::{YakuLanguage, localize_yaku, localized_yaku, yaku};
+use crate::algo::point::Point;
+use crate::algo::shanten;
 use crate::tile::Tile;
 use crate::{matches_tu8, must_tile, tu8};
 use std::cmp::Ordering;
@@ -22,7 +23,7 @@ use tinyvec::ArrayVec;
 const AGARI_TABLE_SIZE: usize = 9_362;
 
 static AGARI_TABLE: LazyLock<BoomHashMap<u32, ArrayVec<[Div; 4]>>> = LazyLock::new(|| {
-    let mut raw = GzDecoder::new(include_bytes!("data/agari.bin.gz").as_slice());
+    let mut raw = GzDecoder::new(include_bytes!("../data/agari.bin.gz").as_slice());
 
     let (keys, values): (Vec<_>, Vec<_>) = (0..AGARI_TABLE_SIZE)
         .map(|_| {
@@ -128,9 +129,7 @@ impl From<u32> for Div {
         let pair_idx = ((v >> 6) & 0b1111) as u8;
 
         let kotsu_count = v & 0b111;
-        let kotsu_idxs = (0..kotsu_count)
-            .map(|i| ((v >> (10 + i * 4)) & 0b1111) as u8)
-            .collect();
+        let kotsu_idxs = (0..kotsu_count).map(|i| ((v >> (10 + i * 4)) & 0b1111) as u8).collect();
 
         let shuntsu_count = (v >> 3) & 0b111;
         let shuntsu_idxs = (kotsu_count..kotsu_count + shuntsu_count)
@@ -160,9 +159,7 @@ impl PartialEq for Agari {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Yakuman(l), Self::Yakuman(r)) => l == r,
-            (Self::Normal { fu: lf, han: lh }, Self::Normal { fu: rf, han: rh }) => {
-                lf == rf && lh == rh
-            }
+            (Self::Normal { fu: lf, han: lh }, Self::Normal { fu: rf, han: rh }) => lf == rf && lh == rh,
             _ => false,
         }
     }
@@ -180,12 +177,10 @@ impl Ord for Agari {
             (Self::Yakuman(l), Self::Yakuman(r)) => l.cmp(r),
             (Self::Yakuman(_), Self::Normal { .. }) => Ordering::Greater,
             (Self::Normal { .. }, Self::Yakuman(..)) => Ordering::Less,
-            (Self::Normal { fu: lf, han: lh }, Self::Normal { fu: rf, han: rh }) => {
-                match lh.cmp(rh) {
-                    Ordering::Equal => lf.cmp(rf),
-                    v => v,
-                }
-            }
+            (Self::Normal { fu: lf, han: lh }, Self::Normal { fu: rf, han: rh }) => match lh.cmp(rh) {
+                Ordering::Equal => lf.cmp(rf),
+                v => v,
+            },
         }
     }
 }
@@ -215,7 +210,7 @@ impl AgariCalculator<'_> {
 
     #[inline]
     #[must_use]
-    pub fn search_yakus_with_names(&self) -> Option<AgariNames> {
+    pub fn search_yakus_with_names(&self) -> Option<AgariWithYaku> {
         self.search_yakus_impl::<false, true>()
     }
 
@@ -260,17 +255,17 @@ impl AgariCalculator<'_> {
         }
     }
 
-    pub fn agari_with_names(&self, additional_hans: u8, doras: u8) -> Option<AgariNames> {
-        if let Some(agari_names) = self.search_yakus_with_names() {
-            Some(AgariNames {
-                agari: match agari_names.agari {
+    pub fn agari_with_yaku(&self, additional_hans: u8, doras: u8) -> Option<AgariWithYaku> {
+        if let Some(agari_with_yaku) = self.search_yakus_with_names() {
+            Some(AgariWithYaku {
+                agari: match agari_with_yaku.agari {
                     Agari::Normal { fu, han } => Agari::Normal {
                         fu,
                         han: han + additional_hans + doras,
                     },
                     agari => agari,
                 },
-                yakus: agari_names.yakus,
+                yaku: agari_with_yaku.yaku,
                 dora: 0,
                 aka_dora: 0,
                 ura_dora: 0,
@@ -278,12 +273,12 @@ impl AgariCalculator<'_> {
         } else if additional_hans == 0 {
             None
         } else if additional_hans + doras >= 5 {
-            Some(AgariNames {
+            Some(AgariWithYaku {
                 agari: Agari::Normal {
                     fu: 0,
                     han: additional_hans + doras,
                 },
-                yakus: vec![],
+                yaku: vec![],
                 dora: 0,
                 aka_dora: 0,
                 ura_dora: 0,
@@ -297,12 +292,12 @@ impl AgariCalculator<'_> {
                 .map(|div| DivWorker::new(self, &tile14, div))
                 .map(|w| w.calc_fu(false))
                 .max()?;
-            Some(AgariNames {
+            Some(AgariWithYaku {
                 agari: Agari::Normal {
                     fu,
                     han: additional_hans + doras,
                 },
-                yakus: vec![],
+                yaku: vec![],
                 dora: 0,
                 aka_dora: 0,
                 ura_dora: 0,
@@ -310,9 +305,7 @@ impl AgariCalculator<'_> {
         }
     }
 
-    fn search_yakus_impl<const RETURN_IF_ANY: bool, const RECORD_NAMES: bool>(
-        &self,
-    ) -> Option<AgariNames> {
+    fn search_yakus_impl<const RETURN_IF_ANY: bool, const RECORD_YAKU: bool>(&self) -> Option<AgariWithYaku> {
         assert_eq!(
             self.is_menzen,
             self.chis.is_empty() && self.pons.is_empty() && self.minkans.is_empty(),
@@ -322,17 +315,17 @@ impl AgariCalculator<'_> {
         // pattern-based yakus.
         if self.is_menzen && crate::algo::shanten::calc_kokushi(self.tehai) == -1 {
             return Some(if self.tehai[self.winning_tile as usize] == 2 {
-                AgariNames {
+                AgariWithYaku {
                     agari: Agari::Yakuman(2),
-                    yakus: vec!["国士無双十三面待ち"],
+                    yaku: vec![yaku!("国士無双十三面待ち")],
                     dora: 0,
                     aka_dora: 0,
                     ura_dora: 0,
                 }
             } else {
-                AgariNames {
+                AgariWithYaku {
                     agari: Agari::Yakuman(1),
-                    yakus: vec!["国士無双"],
+                    yaku: vec![yaku!("国士無双")],
                     dora: 0,
                     aka_dora: 0,
                     ura_dora: 0,
@@ -347,11 +340,11 @@ impl AgariCalculator<'_> {
             // Benchmark result indicates it is too trivial to use rayon here.
             divs.iter()
                 .map(|div| DivWorker::new(self, &tile14, div))
-                .find_map(|w| w.search_yakus::<RETURN_IF_ANY, RECORD_NAMES>())
+                .find_map(|w| w.search_yakus::<RETURN_IF_ANY, RECORD_YAKU>())
         } else {
             divs.iter()
                 .map(|div| DivWorker::new(self, &tile14, div))
-                .filter_map(|w| w.search_yakus::<RETURN_IF_ANY, RECORD_NAMES>())
+                .filter_map(|w| w.search_yakus::<RETURN_IF_ANY, RECORD_YAKU>())
                 .max()
         }
     }
@@ -360,16 +353,8 @@ impl AgariCalculator<'_> {
 impl<'a> DivWorker<'a> {
     fn new(calc: &'a AgariCalculator<'a>, tile14: &'a [u8; 14], div: &'a Div) -> Self {
         let pair_tile = tile14[div.pair_idx as usize];
-        let menzen_kotsu = div
-            .kotsu_idxs
-            .iter()
-            .map(|&idx| tile14[idx as usize])
-            .collect();
-        let menzen_shuntsu = div
-            .shuntsu_idxs
-            .iter()
-            .map(|&idx| tile14[idx as usize])
-            .collect();
+        let menzen_kotsu = div.kotsu_idxs.iter().map(|&idx| tile14[idx as usize]).collect();
+        let menzen_shuntsu = div.shuntsu_idxs.iter().map(|&idx| tile14[idx as usize]).collect();
 
         let mut ret = Self {
             sup: calc,
@@ -522,12 +507,10 @@ impl<'a> DivWorker<'a> {
         ((fu - 1) / 10 + 1) * 10
     }
 
-    fn search_yakus<const RETURN_IF_ANY: bool, const RECORD_NAMES: bool>(
-        &self,
-    ) -> Option<AgariNames> {
+    fn search_yakus<const RETURN_IF_ANY: bool, const RECORD_YAKU: bool>(&self) -> Option<AgariWithYaku> {
         let mut han = 0;
         let mut yakuman = 0;
-        let mut names: Vec<&'static str> = vec![];
+        let mut yaku: Vec<u8> = vec![];
 
         let has_pinfu = self.menzen_shuntsu.len() == 4
             && !matches_tu8!(self.pair_tile, P | F | C)
@@ -541,35 +524,23 @@ impl<'a> DivWorker<'a> {
         macro_rules! make_return {
             () => {
                 return if yakuman > 0 {
-                    Some(AgariNames {
-                        agari: Agari::Yakuman(yakuman),
-                        yakus: names,
-                        dora: 0,
-                        aka_dora: 0,
-                        ura_dora: 0,
-                    })
+                    Some(AgariWithYaku::from_agari(Agari::Yakuman(yakuman), yaku))
                 } else if han > 0 {
                     let fu = if RETURN_IF_ANY || han >= 5 {
                         0
                     } else {
                         self.calc_fu(has_pinfu)
                     };
-                    Some(AgariNames {
-                        agari: Agari::Normal { fu, han },
-                        yakus: names,
-                        dora: 0,
-                        aka_dora: 0,
-                        ura_dora: 0,
-                    })
+                    Some(AgariWithYaku::from_agari(Agari::Normal { fu, han }, yaku))
                 } else {
                     None
                 };
             };
         }
         macro_rules! record_yaku {
-            ($($block:tt)*) => {{
-                if RECORD_NAMES {
-                    names.push($($block)*);
+            ($yaku:tt) => {{
+                if RECORD_YAKU {
+                    yaku.push(yaku!($yaku));
                 }
             }};
         }
@@ -614,22 +585,18 @@ impl<'a> DivWorker<'a> {
             self.all_shuntsu().all(|s| {
                 let num = s % 9;
                 num > 0 && num < 6
-            }) && self
-                .all_kotsu_and_kantsu()
-                .chain(iter::once(self.pair_tile))
-                .all(|k| {
-                    let kind = k / 9;
-                    let num = k % 9;
-                    kind < 3 && num > 0 && num < 8
-                })
+            }) && self.all_kotsu_and_kantsu().chain(iter::once(self.pair_tile)).all(|k| {
+                let kind = k / 9;
+                let num = k % 9;
+                kind < 3 && num > 0 && num < 8
+            })
         };
         if has_tanyao {
             record_yaku! { "断幺九" }
             check_early_return! { han += 1 };
         }
 
-        let has_toitoi =
-            !self.div.has_chitoi && self.menzen_shuntsu.is_empty() && self.sup.chis.is_empty();
+        let has_toitoi = !self.div.has_chitoi && self.menzen_shuntsu.is_empty() && self.sup.chis.is_empty();
         if has_toitoi {
             record_yaku! { "対々和" }
             check_early_return! { han += 2 };
@@ -679,10 +646,7 @@ impl<'a> DivWorker<'a> {
             if self.div.has_ipeikou {
                 record_yaku! { "一盃口" }
                 check_early_return! { han += 1 };
-            } else if !self.sup.ankans.is_empty()
-                && self.sup.is_menzen
-                && self.menzen_shuntsu.len() >= 2
-            {
+            } else if !self.sup.ankans.is_empty() && self.sup.is_menzen && self.menzen_shuntsu.len() >= 2 {
                 let mut shuntsu_marks = [0_u8; 3];
                 let has_ipeikou = self.menzen_shuntsu.iter().any(|&t| {
                     let kind = t as usize / 9;
@@ -750,8 +714,7 @@ impl<'a> DivWorker<'a> {
                 }
             }
 
-            let ankous_count = self.sup.ankans.len() + self.menzen_kotsu.len()
-                - self.winning_tile_makes_minkou as usize;
+            let ankous_count = self.sup.ankans.len() + self.menzen_kotsu.len() - self.winning_tile_makes_minkou as usize;
             match ankous_count {
                 4 if self.sup.tehai[self.sup.winning_tile as usize] == 2 => {
                     record_yaku! { "四暗刻単騎" }
@@ -854,9 +817,7 @@ impl<'a> DivWorker<'a> {
             let is_junchan_or_chanta_or_chinroutou_or_honroutou = if self.div.has_chitoi {
                 self.chitoi_pairs().all(is_yaokyuu)
             } else {
-                self.all_kotsu_and_kantsu()
-                    .chain(iter::once(self.pair_tile))
-                    .all(is_yaokyuu)
+                self.all_kotsu_and_kantsu().chain(iter::once(self.pair_tile)).all(is_yaokyuu)
             };
             if is_junchan_or_chanta_or_chinroutou_or_honroutou {
                 if self.div.has_chitoi || has_toitoi {
@@ -1040,87 +1001,62 @@ pub fn check_ankan_after_riichi(tehai: &[u8; 34], len_div3: u8, tile: Tile, stri
         })
 }
 
-pub const YAKU_NAMES: &[[&str; 2]] = &[
-    ["門前清自摸和", "Fully Concealed Hand"],
-    ["立直", "Riichi"],
-    ["ダブル立直", "Double Riichi"],
-    ["一発", "Ippatsu"],
-    ["平和", "Pinfu"],
-    ["断幺九", "All Simples"],
-    ["一盃口", "Pure Double Sequence"],
-    ["二盃口", "Twice Pure Double Sequence"],
-    ["役牌,白", "White Dragon"],
-    ["役牌,發", "Green Dragon"],
-    ["役牌,中", "Red Dragon"],
-    ["役牌,自風", "Seat Wind"],
-    ["役牌,場風", "Prevalent Wind"],
-    ["三色同順", "Mixed Triple Sequence"],
-    ["一気通貫", "Pure Straight"],
-    ["混全帯幺九", "Half Outside Hand"],
-    ["純全帯幺九", "Fully Outside Hand"],
-    ["対々和", "All Triplets"],
-    ["三暗刻", "Three Concealed Triplets"],
-    ["三槓子", "Three Quads"],
-    ["三色同刻", "Triple Triplets"],
-    ["小三元", "Little Three Dragons"],
-    ["混老頭", "All Terminals and Honors"],
-    ["七対子", "Seven Pairs"],
-    ["混一色", "Half Flush"],
-    ["清一色", "Full Flush"],
-    ["海底摸月", "Under the Sea"],
-    ["河底撈魚", "Under the River"],
-    ["嶺上開花", "After a Kan"],
-    ["槍槓", "Robbing a Kan"],
-    ["ドラ", "Dora"],
-    ["赤ドラ", "Red Five"],
-    ["裏ドラ", "Ura Dora"],
-    ["抜きドラ", "Kita"],
-    ["流し満貫", "Nagashi Mangan"],
-    ["天和", "Blessing of Heaven"],
-    ["地和", "Blessing of Earth"],
-    ["大三元", "Big Three Dragons"],
-    ["四暗刻", "Four Concealed Triplets"],
-    ["四暗刻単騎", "Single-wait Four Concealed Triplets"],
-    ["字一色", "All Honors"],
-    ["緑一色", "All Green"],
-    ["清老頭", "All Terminals"],
-    ["国士無双", "Thirteen Orphans"],
-    ["国士無双十三面待ち", "Thirteen-wait Thirteen Orphans"],
-    ["小四喜", "Four Little Winds"],
-    ["大四喜", "Four Big Winds"],
-    ["四槓子", "Four Quads"],
-    ["九蓮宝燈", "Nine Gates"],
-    ["純正九蓮宝燈", "True Nine Gates"],
-];
-
-pub static YAKU_MAP: LazyLock<BoomHashMap<&'static str, &'static str>> = LazyLock::new(|| {
-    let (keys, values) = YAKU_NAMES.iter().map(|i| (i[0], i[1])).unzip();
-    BoomHashMap::new(keys, values)
-});
-
 /// agari with named yaku
 #[derive(Debug, Clone, Eq)]
-pub struct AgariNames {
+pub struct AgariWithYaku {
     pub agari: Agari,
-    pub yakus: Vec<&'static str>,
+    pub yaku: Vec<u8>,
     pub dora: u8,
     pub aka_dora: u8,
     pub ura_dora: u8,
 }
 
-impl PartialEq for AgariNames {
+impl AgariWithYaku {
+    pub const fn from_agari(agari: Agari, yaku: Vec<u8>) -> Self {
+        Self {
+            agari,
+            yaku,
+            dora: 0,
+            aka_dora: 0,
+            ura_dora: 0,
+        }
+    }
+    /// Localize yaku while expanding dora
+    pub fn localize_yaku(&self, language: YakuLanguage) -> Vec<String> {
+        // safety: yaku indexes are only generated in AgariCalculator which is ensured to be correct
+        let mut yaku: Vec<String> = self
+            .yaku
+            .iter()
+            .map(|yaku| localize_yaku(*yaku, language).to_owned())
+            .collect();
+
+        if self.dora > 0 {
+            yaku.push(format!("{}{}", localized_yaku!("ドラ", language), self.dora));
+        }
+        if self.aka_dora > 0 {
+            yaku.push(format!("{}{}", localized_yaku!("赤ドラ", language), self.aka_dora));
+        }
+        if self.ura_dora > 0 {
+            yaku.push(format!("{}{}", localized_yaku!("裏ドラ", language), self.ura_dora));
+        }
+
+        yaku
+    }
+}
+
+impl PartialEq for AgariWithYaku {
     fn eq(&self, other: &Self) -> bool {
         self.agari.eq(&other.agari)
     }
 }
 
-impl PartialOrd for AgariNames {
+impl PartialOrd for AgariWithYaku {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for AgariNames {
+impl Ord for AgariWithYaku {
     fn cmp(&self, other: &Self) -> Ordering {
         self.agari.cmp(&other.agari)
     }

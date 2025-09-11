@@ -184,14 +184,10 @@ impl PlayerState {
             .map(|(i, (((a, b), c), d))| {
                 format!(
                     "{i:2}. {}\t{}\t{}\t{}",
-                    a.as_ref()
-                        .map_or_else(|| "-".to_owned(), |item| item.to_string()),
-                    b.as_ref()
-                        .map_or_else(|| "-".to_owned(), |item| item.to_string()),
-                    c.as_ref()
-                        .map_or_else(|| "-".to_owned(), |item| item.to_string()),
-                    d.as_ref()
-                        .map_or_else(|| "-".to_owned(), |item| item.to_string()),
+                    a.as_ref().map_or_else(|| "-".to_owned(), |item| item.to_string()),
+                    b.as_ref().map_or_else(|| "-".to_owned(), |item| item.to_string()),
+                    c.as_ref().map_or_else(|| "-".to_owned(), |item| item.to_string()),
+                    d.as_ref().map_or_else(|| "-".to_owned(), |item| item.to_string()),
                 )
             })
             .collect::<Vec<_>>()
@@ -206,7 +202,7 @@ impl PlayerState {
             calc_shanten_down: None,
         };
         if let Ok(tables) = self.single_player_tables(options) {
-            for candidate in tables.max_ev_table {
+            for candidate in tables {
                 sp_tables.push('\n');
                 sp_tables.push_str(&candidate.csv_row(can_discard).join("\t"));
             }

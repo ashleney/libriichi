@@ -96,11 +96,7 @@ impl State {
         }
     }
 
-    pub fn get_discard_tiles(
-        &self,
-        shanten: i8,
-        tehai_len_div3: u8,
-    ) -> ArrayVec<[DiscardTile; 14]> {
+    pub fn get_discard_tiles(&self, shanten: i8, tehai_len_div3: u8) -> ArrayVec<[DiscardTile; 14]> {
         let mut discard_tiles = ArrayVec::default();
 
         let mut tehai = self.tehai;
@@ -202,6 +198,7 @@ impl State {
 }
 
 /// Preferences for single-player table calculation
+#[derive(Debug, Clone, Copy)]
 pub struct SPOptions {
     /// Whether to maximize win probability instaed of expected value
     pub maximize_win_prob: bool,
