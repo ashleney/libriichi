@@ -66,6 +66,7 @@ pub struct SPCalculator<'a> {
     pub max_shanten: i8,
     pub calc_tegawari: Option<i8>,
     pub calc_shanten_down: Option<i8>,
+    pub min_score: Option<i32>,
 }
 
 struct SPCalculatorState<'a, const MAX_TSUMO: usize> {
@@ -716,6 +717,47 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
             }
         };
 
+        // assuming best case ura-dora, ensure score is higher than minimum
+        if let Some(min_score) = self.sup.min_score {
+            let max_ura_dora = if self.sup.is_menzen && self.sup.prefer_riichi {
+                let mut tehai_full = self.state.tehai;
+                for &t in self.sup.ankans {
+                    tehai_full[t as usize] += 4;
+                }
+
+                let mut tehai_ordered_by_count: Vec<_> = tehai_full.iter().enumerate().filter(|&(_, &c)| c > 0).collect();
+                tehai_ordered_by_count.sort_unstable_by(|(_, l), (_, r)| r.cmp(l));
+
+                let mut tiles_in_wall = self.state.tiles_in_wall;
+                let mut found_ura_indicators = 0;
+                let mut ura_count = 0;
+                'outer: for (t, count) in tehai_ordered_by_count {
+                    let ura_ind = must_tile!(t).prev().as_usize();
+                    loop {
+                        if found_ura_indicators >= self.sup.dora_indicators.len() {
+                            break 'outer;
+                        }
+                        if tiles_in_wall[ura_ind] == 0 {
+                            continue 'outer;
+                        }
+                        found_ura_indicators += 1;
+                        ura_count += count;
+                        tiles_in_wall[ura_ind] -= 1;
+                    }
+                }
+                ura_count
+            } else {
+                0
+            };
+            let best_agari = Agari::Normal {
+                fu,
+                han: han + max_ura_dora,
+            };
+            if best_agari.point(is_oya).tsumo_total(is_oya) < min_score {
+                return None;
+            }
+        }
+
         // 役ありの場合
 
         // ダブル立直、一発、海底撈月で最大3翻まで増加するので、
@@ -835,6 +877,7 @@ mod test {
             max_shanten: 3,
             calc_tegawari: Some(3),
             calc_shanten_down: Some(3),
+            min_score: None,
         };
 
         let tehai = hand("45678m 34789p 3344z").unwrap();
@@ -902,6 +945,7 @@ mod test {
             max_shanten: 3,
             calc_tegawari: Some(3),
             calc_shanten_down: Some(3),
+            min_score: None,
         };
 
         let tehai = hand("45677m 456778p 248s").unwrap();
@@ -949,6 +993,7 @@ mod test {
             max_shanten: 3,
             calc_tegawari: Some(3),
             calc_shanten_down: Some(3),
+            min_score: None,
         };
         let tehai = hand("9999m 6677p 88s 335z 1m").unwrap();
         let mut tiles_seen = tehai;
@@ -995,6 +1040,7 @@ mod test {
             max_shanten: 3,
             calc_tegawari: Some(3),
             calc_shanten_down: Some(3),
+            min_score: None,
         };
 
         let tehai = hand("45677m 456778p 48s").unwrap();

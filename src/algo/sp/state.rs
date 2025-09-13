@@ -206,7 +206,25 @@ pub struct SPOptions {
     /// Hands with higher shanten only use ukeire
     pub max_shanten: i8,
     /// Max shanten for tegawari calculation
+    /// None = do not calculate tegawari
     pub calc_tegawari: Option<i8>,
     /// Max shanten from which the hand may still go one shanten down
+    /// None = do not calculate shanten-down
     pub calc_shanten_down: Option<i8>,
+    /// Minimum point score of a hand to be considered as winning, assuming best-case ura-dora
+    /// None = account for all hands
+    pub min_score: Option<i32>,
+}
+
+
+impl Default for SPOptions {
+    fn default() -> Self {
+        Self {
+            maximize_win_prob: false,
+            max_shanten: 3,
+            calc_tegawari: None,
+            calc_shanten_down: None,
+            min_score: None,
+        }
+    }
 }

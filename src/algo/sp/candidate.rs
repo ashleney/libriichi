@@ -10,6 +10,7 @@ use tinyvec::ArrayVec;
 #[derive(Debug, Clone, Copy)]
 pub struct WeightedYaku {
     /// Indexes of yaku and the chances of winning with them
+    // this array is larger than needed but making it smaller leads to more complex code
     pub yaku: [f32; YAKU_COUNT],
     /// Average expected amount of dora
     pub dora: f32,

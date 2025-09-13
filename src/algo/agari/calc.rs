@@ -255,34 +255,30 @@ impl AgariCalculator<'_> {
         }
     }
 
+    /// Agari calculation but with returned names of specific yaku.
+    /// It is the responsibility of the caller to fill in the names of additional_hans and populate doras
     pub fn agari_with_yaku(&self, additional_hans: u8, doras: u8) -> Option<AgariWithYaku> {
         if let Some(agari_with_yaku) = self.search_yakus_with_names() {
-            Some(AgariWithYaku {
-                agari: match agari_with_yaku.agari {
+            Some(AgariWithYaku::from_agari(
+                match agari_with_yaku.agari {
                     Agari::Normal { fu, han } => Agari::Normal {
                         fu,
                         han: han + additional_hans + doras,
                     },
                     agari => agari,
                 },
-                yaku: agari_with_yaku.yaku,
-                dora: 0,
-                aka_dora: 0,
-                ura_dora: 0,
-            })
+                agari_with_yaku.yaku,
+            ))
         } else if additional_hans == 0 {
             None
         } else if additional_hans + doras >= 5 {
-            Some(AgariWithYaku {
-                agari: Agari::Normal {
+            Some(AgariWithYaku::from_agari(
+                Agari::Normal {
                     fu: 0,
                     han: additional_hans + doras,
                 },
-                yaku: vec![],
-                dora: 0,
-                aka_dora: 0,
-                ura_dora: 0,
-            })
+                vec![],
+            ))
         } else {
             let (tile14, key) = get_tile14_and_key(self.tehai);
             let divs = AGARI_TABLE.get(&key)?;
@@ -292,16 +288,13 @@ impl AgariCalculator<'_> {
                 .map(|div| DivWorker::new(self, &tile14, div))
                 .map(|w| w.calc_fu(false))
                 .max()?;
-            Some(AgariWithYaku {
-                agari: Agari::Normal {
+            Some(AgariWithYaku::from_agari(
+                Agari::Normal {
                     fu,
                     han: additional_hans + doras,
                 },
-                yaku: vec![],
-                dora: 0,
-                aka_dora: 0,
-                ura_dora: 0,
-            })
+                vec![],
+            ))
         }
     }
 
@@ -315,21 +308,9 @@ impl AgariCalculator<'_> {
         // pattern-based yakus.
         if self.is_menzen && crate::algo::shanten::calc_kokushi(self.tehai) == -1 {
             return Some(if self.tehai[self.winning_tile as usize] == 2 {
-                AgariWithYaku {
-                    agari: Agari::Yakuman(2),
-                    yaku: vec![yaku!("国士無双十三面待ち")],
-                    dora: 0,
-                    aka_dora: 0,
-                    ura_dora: 0,
-                }
+                AgariWithYaku::from_agari(Agari::Yakuman(2), vec![yaku!("国士無双十三面待ち")])
             } else {
-                AgariWithYaku {
-                    agari: Agari::Yakuman(1),
-                    yaku: vec![yaku!("国士無双")],
-                    dora: 0,
-                    aka_dora: 0,
-                    ura_dora: 0,
-                }
+                AgariWithYaku::from_agari(Agari::Yakuman(1), vec![yaku!("国士無双")])
             });
         }
 

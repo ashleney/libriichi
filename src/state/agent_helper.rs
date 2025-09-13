@@ -378,13 +378,10 @@ impl PlayerState {
         // Here, 天和 and 地和 are handled individually as special cases, and
         // there is no multi yakuman for these two.
         if !is_ron && self.can_w_riichi {
-            return Ok(Some(AgariWithYaku {
-                agari: Agari::Yakuman(1),
-                yaku: vec![if self.is_oya() { yaku!("天和") } else { yaku!("地和") }],
-                dora: 0,
-                aka_dora: 0,
-                ura_dora: 0,
-            }));
+            return Ok(Some(AgariWithYaku::from_agari(
+                Agari::Yakuman(1),
+                vec![if self.is_oya() { yaku!("天和") } else { yaku!("地和") }],
+            )));
         }
 
         let mut additional_yaku = vec![];
@@ -518,8 +515,6 @@ impl PlayerState {
 
     /// Can be called at both 3n+1 and 3n+2, but `self.real_time_shanten` must
     /// be >= 0 and `self.tiles_left` must be >= 4.
-    ///
-    /// This function is currently highly internal.
     pub fn single_player_tables(&self, options: &SPOptions) -> Result<Vec<Candidate>> {
         ensure!(self.tiles_left >= 4, "need at least one more tsumo");
 
@@ -544,8 +539,8 @@ impl PlayerState {
             let num_akas = self.akas_in_hand.iter().filter(|&&b| b).count() as u8;
             self.doras_owned[0] - num_doras_in_tehai - num_akas
         };
-        let prefer_riichi = self.scores[0] >= 1000;
-        let calc_double_riichi = can_discard && self.can_w_riichi;
+        let prefer_riichi = self.riichi_declared[0] || self.last_cans.can_riichi || cur_shanten != 0;
+        let calc_double_riichi = (can_discard && self.can_w_riichi) || self.is_w_riichi;
 
         // If the player has an accepted riichi and has just dealt a tile
         // (can_discard) that can't win (cur_shanten >= 0), treat the hand as if
@@ -588,8 +583,9 @@ impl PlayerState {
             sort_result: true,
             maximize_win_prob: options.maximize_win_prob,
             max_shanten: options.max_shanten,
-            calc_tegawari: options.calc_tegawari,
-            calc_shanten_down: options.calc_shanten_down,
+            calc_tegawari: options.calc_tegawari.filter(|_| !self.riichi_declared[0]),
+            calc_shanten_down: options.calc_shanten_down.filter(|_| !self.riichi_declared[0]),
+            min_score: options.min_score.filter(|_| !self.riichi_declared[0]),
         };
 
         let mut max_ev_table = sp_calc.calc(init_state, can_discard, tsumos_left, cur_shanten)?;
@@ -771,28 +767,24 @@ impl PlayerState {
                 table.push((event, candidate));
             } else if let Ok(candidates) = candidates {
                 for candidate in candidates {
-                    table.push((
-                        Event::Dahai {
-                            actor: self.player_id,
-                            pai: candidate.tile,
-                            tsumogiri: Some(candidate.tile) == self.last_self_tsumo,
-                        },
-                        Some(candidate),
-                    ));
+                    let event = Event::Dahai {
+                        actor: self.player_id,
+                        pai: candidate.tile,
+                        tsumogiri: Some(candidate.tile) == self.last_self_tsumo,
+                    };
+                    table.push((event, Some(candidate)));
                 }
             } else {
                 // TODO: Candidates after furiten
                 for (tile, discard_candidate) in self.discard_candidates_aka().iter().enumerate() {
                     if *discard_candidate {
                         let tile = must_tile!(tile);
-                        table.push((
-                            Event::Dahai {
-                                actor: self.player_id,
-                                pai: tile,
-                                tsumogiri: Some(tile) == self.last_self_tsumo,
-                            },
-                            None,
-                        ));
+                        let event = Event::Dahai {
+                            actor: self.player_id,
+                            pai: tile,
+                            tsumogiri: Some(tile) == self.last_self_tsumo,
+                        };
+                        table.push((event, None));
                     }
                 }
             }

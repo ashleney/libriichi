@@ -181,7 +181,7 @@ impl Event {
         matches!(self, Self::ReachAccepted { .. } | Self::Dora { .. } | Self::Hora { .. })
     }
 
-    pub fn to_mortal_string(&self) -> String {
+    pub fn to_decision_string(&self) -> String {
         match self {
             Self::Dahai { pai, .. } => pai.to_string(),
             Self::None => "pass".to_owned(),
