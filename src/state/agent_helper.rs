@@ -9,7 +9,7 @@ use crate::tile::Tile;
 use crate::vec_ops::vec_add_assign;
 use crate::{must_tile, t, tu8, tuz};
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use tinyvec::array_vec;
 
 impl PlayerState {
@@ -370,11 +370,6 @@ impl PlayerState {
     }
 
     pub fn calculate_agari(&self, winning_tile: Tile, is_ron: bool, ura_indicators: &[Tile]) -> Result<Option<AgariWithYaku>> {
-        ensure!(
-            is_ron && self.last_cans.can_ron_agari || self.last_cans.can_tsumo_agari,
-            "cannot agari"
-        );
-
         // Here, 天和 and 地和 are handled individually as special cases, and
         // there is no multi yakuman for these two.
         if !is_ron && self.can_w_riichi {
@@ -516,10 +511,25 @@ impl PlayerState {
     /// Can be called at both 3n+1 and 3n+2, but `self.real_time_shanten` must
     /// be >= 0 and `self.tiles_left` must be >= 4.
     pub fn single_player_tables(&self, options: &SPOptions) -> Result<Vec<Candidate>> {
-        ensure!(self.tiles_left >= 4, "need at least one more tsumo");
-
         let cur_shanten = self.real_time_shanten();
-        ensure!(cur_shanten >= 0, "can't calculate an agari hand");
+        if cur_shanten == -1 {
+            return self
+                .discard_candidates_aka()
+                .iter()
+                .enumerate()
+                .filter_map(|(tile, b)| (*b).then(|| must_tile!(tile)))
+                .map(|tile| {
+                    let mut state: PlayerState = self.clone();
+                    state.update(&Event::Dahai {
+                        actor: self.player_id,
+                        pai: tile,
+                        tsumogiri: Some(tile) == state.last_self_tsumo,
+                    })?;
+                    let table = state.single_player_tables(options)?;
+                    Ok(table.into_iter().next().expect("No candidates"))
+                })
+                .collect::<Result<Vec<_>>>();
+        }
 
         let mut can_discard = self.last_cans.can_discard;
         let (tsumos_left, calc_haitei) = if can_discard {
@@ -530,7 +540,6 @@ impl PlayerState {
             let tiles_left_at_next_tsumo = self.tiles_left.saturating_sub(4 - target);
             (tiles_left_at_next_tsumo / 4, tiles_left_at_next_tsumo % 4 == 0)
         };
-        ensure!(tsumos_left >= 1, "need at least one more tsumo");
 
         let num_doras_in_fuuro = if self.is_menzen && self.ankan_overview[0].is_empty() {
             0
@@ -775,17 +784,21 @@ impl PlayerState {
                     table.push((event, Some(candidate)));
                 }
             } else {
-                // TODO: Candidates after furiten
-                for (tile, discard_candidate) in self.discard_candidates_aka().iter().enumerate() {
-                    if *discard_candidate {
-                        let tile = must_tile!(tile);
-                        let event = Event::Dahai {
-                            actor: self.player_id,
-                            pai: tile,
-                            tsumogiri: Some(tile) == self.last_self_tsumo,
-                        };
-                        table.push((event, None));
+                candidates.unwrap();
+                if self.last_cans.can_discard {
+                    for (tile, discard_candidate) in self.discard_candidates_aka().iter().enumerate() {
+                        if *discard_candidate {
+                            let tile = must_tile!(tile);
+                            let event = Event::Dahai {
+                                actor: self.player_id,
+                                pai: tile,
+                                tsumogiri: Some(tile) == self.last_self_tsumo,
+                            };
+                            table.push((event, None));
+                        }
                     }
+                } else {
+                    table.push((Event::None, None));
                 }
             }
         }

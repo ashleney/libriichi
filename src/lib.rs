@@ -95,15 +95,11 @@
 
 mod macros;
 mod vec_ops;
-
-// pub for bins
 pub mod chi_type;
 pub mod mjai;
 pub mod state;
 
-// pub for non-cfg(test) tests
 pub mod tile;
 
-// pub for benchmarks
 pub mod algo;
 pub mod hand;

@@ -6,6 +6,7 @@ use crate::algo::agari::calc::{Agari, AgariCalculator};
 use crate::algo::agari::yaku::yaku;
 use crate::tile::Tile;
 use crate::{must_tile, t, tu8};
+use std::array::from_fn;
 use std::rc::Rc;
 
 use ahash::AHashMap;
@@ -31,7 +32,6 @@ struct Scores {
     yaku: Vec<u8>,
     dora: u8,
     aka_dora: u8,
-    /// expected average ura dora
     ura_dora: f32,
 }
 
@@ -89,7 +89,6 @@ impl SPCalculator<'_> {
     /// The return value will be sorted and index 0 will be the best choice.
     pub fn calc(&self, init_state: InitState, can_discard: bool, tsumos_left: u8, cur_shanten: i8) -> Result<Vec<Candidate>> {
         ensure!(cur_shanten >= 0, "can't calculate an agari hand");
-        ensure!(tsumos_left >= 1, "need at least one more tsumo");
         ensure!(tsumos_left <= MAX_TSUMOS_LEFT as u8);
         ensure!(self.max_shanten <= 5, "cannot reasonably calculate 6-shanten hands");
 
@@ -97,6 +96,19 @@ impl SPCalculator<'_> {
 
         let state = State::from(init_state);
         let n_left_tiles = state.sum_left_tiles() as usize;
+
+        if tsumos_left == 0 {
+            // only ever simple
+            let mut calc_state = SPCalculatorState::<0> {
+                sup: self,
+                state,
+                tsumo_prob_table: &[[]; 4],
+                not_tsumo_prob_table: &[[]; 123],
+                discard_cache: Default::default(),
+                draw_cache: Default::default(),
+            };
+            return Ok(calc_state.calc(can_discard, cur_shanten));
+        }
 
         // Despite the bloating binary size, the use of const generics here may
         // help eliminate branches (eg. bound checks) and reduce buffer space,
@@ -159,7 +171,7 @@ fn build_not_tsumo_prob_table<const MAX_TSUMO: usize>(n_left_tiles: usize) -> [[
 
 impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
     fn calc(&mut self, can_discard: bool, cur_shanten: i8) -> Vec<Candidate> {
-        if cur_shanten <= self.sup.max_shanten {
+        if cur_shanten <= self.sup.max_shanten && MAX_TSUMO >= 1 {
             // 3向聴以下は聴牌確率、和了確率、期待値を計算する。
             let mut candidates = if can_discard {
                 self.analyze_discard(cur_shanten)
@@ -320,7 +332,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
         let mut tenpai_probs = [0.; MAX_TSUMO];
         let mut win_probs = [0.; MAX_TSUMO];
         let mut exp_values = [0.; MAX_TSUMO];
-        let mut yaku = [WeightedYaku::default(); MAX_TSUMO];
+        let mut yaku: [WeightedYaku; MAX_TSUMO] = from_fn(|_| WeightedYaku::default());
 
         // 自摸候補を取得する。
         let draw_tiles = self.state.get_draw_tiles(shanten, self.sup.tehai_len_div3);
@@ -377,15 +389,18 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
 
                         win_probs[i] += tump_prob;
                         exp_values[i] += tump_prob * scores.scores[han_plus];
-                        yaku[i] += WeightedYaku::from_score(
-                            &scores.yaku,
-                            scores.dora,
-                            scores.aka_dora,
-                            scores.ura_dora,
-                            win_double_riichi,
-                            win_ippatsu,
-                            win_haitei,
-                        ) * tump_prob;
+                        yaku[i].add(
+                            &WeightedYaku::from_score(
+                                &scores.yaku,
+                                scores.dora,
+                                scores.aka_dora,
+                                scores.ura_dora,
+                                win_double_riichi,
+                                win_ippatsu,
+                                win_haitei,
+                            ),
+                            tump_prob,
+                        );
                     }
                     ScoresOrValues::Values(next_values) => {
                         if shanten == 1 {
@@ -398,7 +413,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
                             }
                             win_probs[i] += tump_prob * next_values.win_probs[i + 1];
                             exp_values[i] += tump_prob * next_values.exp_values[i + 1];
-                            yaku[i] += next_values.yaku[i + 1] * tump_prob;
+                            yaku[i].add(&next_values.yaku[i + 1], tump_prob);
                         }
                     }
                 }
@@ -430,7 +445,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
                 tenpai_probs[i] += tump_prob * next_values.tenpai_probs[i + 1];
                 win_probs[i] += tump_prob * next_values.win_probs[i + 1];
                 exp_values[i] += tump_prob * next_values.exp_values[i + 1];
-                yaku[i] += next_values.yaku[i + 1] * tump_prob;
+                yaku[i].add(&next_values.yaku[i + 1], tump_prob);
             }
         }
 
@@ -456,7 +471,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
         let mut tenpai_probs = [0.; MAX_TSUMO];
         let mut win_probs = [0.; MAX_TSUMO];
         let mut exp_values = [0.; MAX_TSUMO];
-        let mut yaku = [WeightedYaku::default(); MAX_TSUMO];
+        let mut yaku: [WeightedYaku; MAX_TSUMO] = from_fn(|_| WeightedYaku::default());
 
         // 自摸候補を取得する。
         let draw_tiles = self.state.get_draw_tiles(shanten, self.sup.tehai_len_div3);
@@ -524,15 +539,18 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
 
                             win_probs[i] += prob;
                             exp_values[i] += prob * scores.scores[han_plus];
-                            yaku[i] += WeightedYaku::from_score(
-                                &scores.yaku,
-                                scores.dora,
-                                scores.aka_dora,
-                                scores.ura_dora,
-                                win_double_riichi,
-                                win_ippatsu,
-                                win_haitei,
-                            ) * prob;
+                            yaku[i].add(
+                                &WeightedYaku::from_score(
+                                    &scores.yaku,
+                                    scores.dora,
+                                    scores.aka_dora,
+                                    scores.ura_dora,
+                                    win_double_riichi,
+                                    win_ippatsu,
+                                    win_haitei,
+                                ),
+                                prob,
+                            );
                         }
                         ScoresOrValues::Values(next_values) => {
                             if shanten == 1 {
@@ -547,7 +565,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
                                 // 聴牌以上で max_tsumo_ - 1 巡目以下の場合
                                 win_probs[i] += prob * next_values.win_probs[j + 1];
                                 exp_values[i] += prob * next_values.exp_values[j + 1];
-                                yaku[i] += next_values.yaku[j + 1] * prob;
+                                yaku[i].add(&next_values.yaku[j + 1], prob);
                             }
                         }
                     }
@@ -583,7 +601,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
         let mut max_exp_values = [f32::MIN; MAX_TSUMO];
         let mut max_tiles = [t!(?); MAX_TSUMO];
         let mut max_values = [i32::MIN; MAX_TSUMO];
-        let mut yaku = [WeightedYaku::default(); MAX_TSUMO];
+        let mut yaku: [WeightedYaku; MAX_TSUMO] = from_fn(|_| WeightedYaku::default());
 
         for DiscardTile { tile, shanten_diff } in discard_tiles {
             let values;
@@ -625,7 +643,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
                     max_exp_values[i] = values.exp_values[i];
                     max_values[i] = value;
                     max_tiles[i] = tile;
-                    yaku[i] = values.yaku[i];
+                    yaku[i] = values.yaku[i].clone();
                 }
             }
         }

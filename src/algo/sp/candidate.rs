@@ -1,17 +1,17 @@
 use super::MAX_TSUMOS_LEFT;
 use super::tile::RequiredTile;
-use crate::algo::agari::yaku::{YAKU_COUNT, yaku};
+use crate::algo::agari::yaku::{yaku};
 use crate::tile::Tile;
 use std::cmp::Ordering;
-use std::ops::{AddAssign, Mul};
 
+use ahash::AHashMap;
 use tinyvec::ArrayVec;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct WeightedYaku {
     /// Indexes of yaku and the chances of winning with them
     // this array is larger than needed but making it smaller leads to more complex code
-    pub yaku: [f32; YAKU_COUNT],
+    pub yaku: AHashMap<u8, f32>,
     /// Average expected amount of dora
     pub dora: f32,
     /// Average expected amount of akadora
@@ -20,7 +20,7 @@ pub struct WeightedYaku {
     pub ura_dora: f32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Candidate {
     /// 打牌
     pub tile: Tile,
@@ -76,7 +76,7 @@ impl From<RawCandidate<'_>> for Candidate {
         let tenpai_probs = tenpai_probs.iter().map(|p| p.clamp(0., 1.)).collect();
         let win_probs = win_probs.iter().map(|p| p.clamp(0., 1.)).collect();
         let exp_values = exp_values.iter().map(|v| v.max(0.)).collect();
-        let yaku = yaku.iter().copied().collect();
+        let yaku = yaku.iter().cloned().collect();
 
         Self {
             tile,
@@ -181,53 +181,34 @@ impl WeightedYaku {
         win_ippatsu: bool,
         win_haitei: bool,
     ) -> Self {
-        let mut yaku_array = [0.; YAKU_COUNT];
+        let mut yaku_map = AHashMap::new();
         for &y in yaku {
-            yaku_array[y as usize] = 1.;
+            yaku_map.insert(y, 1.);
         }
         if win_double_riichi {
-            yaku_array[yaku!("ダブル立直") as usize] = 1.;
+            yaku_map.insert(yaku!("ダブル立直"), 1.);
         }
         if win_ippatsu {
-            yaku_array[yaku!("一発") as usize] = 1.;
+            yaku_map.insert(yaku!("一発"), 1.);
         }
         if win_haitei {
-            yaku_array[yaku!("海底摸月") as usize] = 1.;
+            yaku_map.insert(yaku!("海底摸月"), 1.);
         }
         Self {
-            yaku: yaku_array,
+            yaku: yaku_map,
             dora: dora as f32,
             aka_dora: aka_dora as f32,
             ura_dora,
         }
     }
-}
 
-impl AddAssign<Self> for WeightedYaku {
-    #[inline]
-    fn add_assign(&mut self, other: Self) {
-        for (yaku, prob) in other.yaku.iter().enumerate() {
-            self.yaku[yaku] += prob;
+    pub fn add(&mut self, other: &Self, prob: f32) {
+        for (&yaku, &p) in other.yaku.iter() {
+            *self.yaku.entry(yaku).or_insert(0.0) += p * prob;
         }
-        self.dora += other.dora;
-        self.aka_dora += other.aka_dora;
-        self.ura_dora += other.ura_dora;
-    }
-}
-
-impl Mul<f32> for WeightedYaku {
-    type Output = Self;
-
-    #[inline]
-    fn mul(self, prob: f32) -> Self {
-        let mut result = self;
-        for y in &mut result.yaku {
-            *y *= prob;
-        }
-        result.dora *= prob;
-        result.aka_dora *= prob;
-        result.ura_dora *= prob;
-        result
+        self.dora     += other.dora * prob;
+        self.aka_dora += other.aka_dora * prob;
+        self.ura_dora += other.ura_dora * prob;
     }
 }
 
@@ -237,8 +218,7 @@ impl WeightedYaku {
         let mut yaku: Vec<_> = self
             .yaku
             .iter()
-            .enumerate()
-            .filter_map(|(yaku, &prob)| (prob > 0.).then_some((yaku as u8, prob)))
+            .filter_map(|(&yaku, &prob)| (prob > 0.).then_some((yaku, prob)))
             .collect();
         yaku.sort_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap());
         yaku
@@ -248,7 +228,7 @@ impl WeightedYaku {
 impl Default for WeightedYaku {
     fn default() -> Self {
         Self {
-            yaku: [0.0; YAKU_COUNT],
+            yaku: AHashMap::new(),
             dora: 0.0,
             aka_dora: 0.0,
             ura_dora: 0.0,

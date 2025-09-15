@@ -55,7 +55,6 @@ pub const YAKU_NAMES: [[&str; 3]; YAKU_COUNT] = [
 
 #[rustfmt::skip]
 macro_rules! yaku {
-    // Each arm matches the Japanese string literal and expands to its index.
     ("門前清自摸和") => (0_u8);
     ("立直") => (1_u8);
     ("ダブル立直") => (2_u8);
