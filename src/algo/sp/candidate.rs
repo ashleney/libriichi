@@ -91,19 +91,24 @@ impl From<RawCandidate<'_>> for Candidate {
 
 impl Candidate {
     pub fn cmp(&self, other: &Self, by: CandidateColumn) -> Ordering {
-        if self.tile == other.tile {
-            return Ordering::Equal;
+        macro_rules! cmp_first {
+            ($self_slice:expr, $other_slice:expr) => {{
+                let self_val = $self_slice.first().copied().unwrap_or(0.);
+                let other_val = $other_slice.first().copied().unwrap_or(0.);
+                self_val.total_cmp(&other_val)
+            }};
         }
+
         match by {
-            CandidateColumn::EV => match self.exp_values[0].total_cmp(&other.exp_values[0]) {
+            CandidateColumn::EV => match cmp_first!(self.exp_values, other.exp_values) {
                 Ordering::Equal => self.cmp(other, CandidateColumn::WinProb),
                 o => o,
             },
-            CandidateColumn::WinProb => match self.win_probs[0].total_cmp(&other.win_probs[0]) {
+            CandidateColumn::WinProb => match cmp_first!(self.win_probs, other.win_probs) {
                 Ordering::Equal => self.cmp(other, CandidateColumn::TenpaiProb),
                 o => o,
             },
-            CandidateColumn::TenpaiProb => match self.tenpai_probs[0].total_cmp(&other.tenpai_probs[0]) {
+            CandidateColumn::TenpaiProb => match cmp_first!(self.tenpai_probs, other.tenpai_probs) {
                 Ordering::Equal => self.cmp(other, CandidateColumn::NotShantenDown),
                 o => o,
             },

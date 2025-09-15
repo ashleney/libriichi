@@ -216,7 +216,6 @@ pub struct SPOptions {
     pub min_score: Option<i32>,
 }
 
-
 impl Default for SPOptions {
     fn default() -> Self {
         Self {

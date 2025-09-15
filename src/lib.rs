@@ -93,11 +93,11 @@
     clippy::useless_let_if_seq
 )]
 
-mod macros;
-mod vec_ops;
 pub mod chi_type;
+mod macros;
 pub mod mjai;
 pub mod state;
+mod vec_ops;
 
 pub mod tile;
 

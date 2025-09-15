@@ -3,7 +3,7 @@ use crate::algo::agari::calc::{Agari, AgariCalculator, AgariWithYaku};
 use crate::algo::agari::yaku::yaku;
 use crate::algo::point::Point;
 use crate::algo::shanten;
-use crate::algo::sp::{Candidate, InitState, SPCalculator, SPOptions};
+use crate::algo::sp::{Candidate, CandidateColumn, InitState, SPCalculator, SPOptions};
 use crate::mjai::Event;
 use crate::tile::Tile;
 use crate::vec_ops::vec_add_assign;
@@ -763,12 +763,18 @@ impl PlayerState {
 
     /// Single player tables for every possible event including dahai
     /// If candidates cannot be calculated for an event that we can do, they will be None
+    /// Same as single_player_tables, candidates are sorted.
     pub fn single_player_tables_for_events(&self, options: &SPOptions) -> Vec<(Event, Candidate)> {
         let mut table = vec![];
         for (event, candidates) in self.single_player_tables_after_actions(options) {
             if let Some(event) = event {
-                let mut candidate = candidates.unwrap().into_iter().next().unwrap();
-                candidate.tile = t!(?);
+                let candidate = if let Some(mut candidate) = candidates.unwrap().into_iter().next() {
+                    candidate.tile = t!(?);
+                    candidate
+                } else {
+                    // No valid discard that keeps shanten
+                    Candidate::default()
+                };
                 table.push((event, candidate));
             } else {
                 for candidate in candidates.unwrap() {
@@ -785,6 +791,12 @@ impl PlayerState {
                 }
             }
         }
+        let by = if options.maximize_win_prob {
+            CandidateColumn::WinProb
+        } else {
+            CandidateColumn::EV
+        };
+        table.sort_unstable_by(|(_, r), (_, l)| l.cmp(r, by));
 
         table
     }
