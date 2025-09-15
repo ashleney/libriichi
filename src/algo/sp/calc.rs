@@ -90,7 +90,6 @@ impl SPCalculator<'_> {
     pub fn calc(&self, init_state: InitState, can_discard: bool, tsumos_left: u8, cur_shanten: i8) -> Result<Vec<Candidate>> {
         ensure!(cur_shanten >= 0, "can't calculate an agari hand");
         ensure!(tsumos_left <= MAX_TSUMOS_LEFT as u8);
-        ensure!(self.max_shanten <= 5, "cannot reasonably calculate 6-shanten hands");
 
         let max_tsumo = tsumos_left as usize;
 

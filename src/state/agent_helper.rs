@@ -508,8 +508,7 @@ impl PlayerState {
         shanten::calc_all(&self.tehai, self.tehai_len_div3)
     }
 
-    /// Can be called at both 3n+1 and 3n+2, but `self.real_time_shanten` must
-    /// be >= 0 and `self.tiles_left` must be >= 4.
+    /// Can be called at both 3n+1 and 3n+2
     pub fn single_player_tables(&self, options: &SPOptions) -> Result<Vec<Candidate>> {
         let cur_shanten = self.real_time_shanten();
         if cur_shanten == -1 {
@@ -517,9 +516,10 @@ impl PlayerState {
                 .discard_candidates_aka()
                 .iter()
                 .enumerate()
-                .filter_map(|(tile, b)| (*b).then(|| must_tile!(tile)))
+                .filter(|&(_, &b)| b)
+                .map(|(tile, _)| must_tile!(tile))
                 .map(|tile| {
-                    let mut state: PlayerState = self.clone();
+                    let mut state = self.clone();
                     state.update(&Event::Dahai {
                         actor: self.player_id,
                         pai: tile,
@@ -763,42 +763,25 @@ impl PlayerState {
 
     /// Single player tables for every possible event including dahai
     /// If candidates cannot be calculated for an event that we can do, they will be None
-    pub fn single_player_tables_for_events(&self, options: &SPOptions) -> Vec<(Event, Option<Candidate>)> {
+    pub fn single_player_tables_for_events(&self, options: &SPOptions) -> Vec<(Event, Candidate)> {
         let mut table = vec![];
         for (event, candidates) in self.single_player_tables_after_actions(options) {
             if let Some(event) = event {
-                let candidate = candidates.ok().and_then(|candidates| {
-                    candidates.into_iter().next().map(|mut candidate| {
-                        candidate.tile = t!(?);
-                        candidate
-                    })
-                });
+                let mut candidate = candidates.unwrap().into_iter().next().unwrap();
+                candidate.tile = t!(?);
                 table.push((event, candidate));
-            } else if let Ok(candidates) = candidates {
-                for candidate in candidates {
-                    let event = Event::Dahai {
-                        actor: self.player_id,
-                        pai: candidate.tile,
-                        tsumogiri: Some(candidate.tile) == self.last_self_tsumo,
-                    };
-                    table.push((event, Some(candidate)));
-                }
             } else {
-                candidates.unwrap();
-                if self.last_cans.can_discard {
-                    for (tile, discard_candidate) in self.discard_candidates_aka().iter().enumerate() {
-                        if *discard_candidate {
-                            let tile = must_tile!(tile);
-                            let event = Event::Dahai {
-                                actor: self.player_id,
-                                pai: tile,
-                                tsumogiri: Some(tile) == self.last_self_tsumo,
-                            };
-                            table.push((event, None));
+                for candidate in candidates.unwrap() {
+                    let event = if candidate.tile == t!(?) {
+                        Event::None
+                    } else {
+                        Event::Dahai {
+                            actor: self.player_id,
+                            pai: candidate.tile,
+                            tsumogiri: Some(candidate.tile) == self.last_self_tsumo,
                         }
-                    }
-                } else {
-                    table.push((Event::None, None));
+                    };
+                    table.push((event, candidate));
                 }
             }
         }

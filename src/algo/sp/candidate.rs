@@ -1,17 +1,15 @@
 use super::MAX_TSUMOS_LEFT;
 use super::tile::RequiredTile;
-use crate::algo::agari::yaku::{yaku};
+use crate::algo::agari::yaku::{YAKU_COUNT, yaku};
 use crate::tile::Tile;
 use std::cmp::Ordering;
-
-use ahash::AHashMap;
 use tinyvec::ArrayVec;
 
 #[derive(Debug, Clone)]
 pub struct WeightedYaku {
     /// Indexes of yaku and the chances of winning with them
     // this array is larger than needed but making it smaller leads to more complex code
-    pub yaku: AHashMap<u8, f32>,
+    pub yaku: [f32; YAKU_COUNT],
     /// Average expected amount of dora
     pub dora: f32,
     /// Average expected amount of akadora
@@ -181,21 +179,21 @@ impl WeightedYaku {
         win_ippatsu: bool,
         win_haitei: bool,
     ) -> Self {
-        let mut yaku_map = AHashMap::new();
+        let mut yaku_array = [0.; YAKU_COUNT];
         for &y in yaku {
-            yaku_map.insert(y, 1.);
+            yaku_array[y as usize] = 1.;
         }
         if win_double_riichi {
-            yaku_map.insert(yaku!("ダブル立直"), 1.);
+            yaku_array[yaku!("ダブル立直") as usize] = 1.;
         }
         if win_ippatsu {
-            yaku_map.insert(yaku!("一発"), 1.);
+            yaku_array[yaku!("一発") as usize] = 1.;
         }
         if win_haitei {
-            yaku_map.insert(yaku!("海底摸月"), 1.);
+            yaku_array[yaku!("海底摸月") as usize] = 1.;
         }
         Self {
-            yaku: yaku_map,
+            yaku: yaku_array,
             dora: dora as f32,
             aka_dora: aka_dora as f32,
             ura_dora,
@@ -203,10 +201,10 @@ impl WeightedYaku {
     }
 
     pub fn add(&mut self, other: &Self, prob: f32) {
-        for (&yaku, &p) in other.yaku.iter() {
-            *self.yaku.entry(yaku).or_insert(0.0) += p * prob;
+        for (yaku, &p) in other.yaku.iter().enumerate() {
+            self.yaku[yaku] += p * prob;
         }
-        self.dora     += other.dora * prob;
+        self.dora += other.dora * prob;
         self.aka_dora += other.aka_dora * prob;
         self.ura_dora += other.ura_dora * prob;
     }
@@ -218,7 +216,8 @@ impl WeightedYaku {
         let mut yaku: Vec<_> = self
             .yaku
             .iter()
-            .filter_map(|(&yaku, &prob)| (prob > 0.).then_some((yaku, prob)))
+            .enumerate()
+            .filter_map(|(yaku, &prob)| (prob > 0.).then_some((yaku as u8, prob)))
             .collect();
         yaku.sort_by(|(_, a), (_, b)| b.partial_cmp(a).unwrap());
         yaku
@@ -228,7 +227,7 @@ impl WeightedYaku {
 impl Default for WeightedYaku {
     fn default() -> Self {
         Self {
-            yaku: AHashMap::new(),
+            yaku: [0.0; YAKU_COUNT],
             dora: 0.0,
             aka_dora: 0.0,
             ura_dora: 0.0,
