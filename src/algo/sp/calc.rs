@@ -96,7 +96,7 @@ impl SPCalculator<'_> {
         let state = State::from(init_state);
         let n_left_tiles = state.sum_left_tiles() as usize;
 
-        if tsumos_left == 0 {
+        if tsumos_left == 0 || cur_shanten == 6 {
             // only ever simple
             let mut calc_state = SPCalculatorState::<0> {
                 sup: self,

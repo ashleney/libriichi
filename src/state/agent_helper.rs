@@ -1,9 +1,11 @@
+use std::iter::once;
+
 use super::PlayerState;
 use crate::algo::agari::calc::{Agari, AgariCalculator, AgariWithYaku};
 use crate::algo::agari::yaku::yaku;
 use crate::algo::point::Point;
 use crate::algo::shanten;
-use crate::algo::sp::{Candidate, CandidateColumn, InitState, SPCalculator, SPOptions};
+use crate::algo::sp::{Candidate, CandidateColumn, EventCandidate, InitState, SPCalculator, SPOptions};
 use crate::mjai::Event;
 use crate::tile::Tile;
 use crate::vec_ops::vec_add_assign;
@@ -436,7 +438,7 @@ impl PlayerState {
                 .map(|&ura| {
                     let next = ura.next();
                     let mut count = tehai[next.as_usize()];
-                    if self.ankan_overview[0].contains(&next) {
+                    if self.ankans.contains(&next.as_u8()) {
                         count += 4;
                     }
                     count
@@ -458,7 +460,7 @@ impl PlayerState {
             winning_tile: winning_tile.deaka().as_u8(),
             is_ron,
         };
-        let agari_names = agari_calc
+        let agari_names: Option<AgariWithYaku> = agari_calc
             .agari_with_yaku(additional_hans, doras_owned + akas_owned + ura_doras_owned)
             .map(|mut agari| {
                 agari.yaku.extend(additional_yaku);
@@ -509,10 +511,10 @@ impl PlayerState {
     }
 
     /// Can be called at both 3n+1 and 3n+2
-    pub fn single_player_tables(&self, options: &SPOptions) -> Result<Vec<Candidate>> {
+    pub fn single_player_tables(&self, options: &SPOptions) -> Vec<Candidate> {
         let cur_shanten = self.real_time_shanten();
         if cur_shanten == -1 {
-            return self
+            let mut candidates = self
                 .discard_candidates_aka()
                 .iter()
                 .enumerate()
@@ -520,15 +522,26 @@ impl PlayerState {
                 .map(|(tile, _)| must_tile!(tile))
                 .map(|tile| {
                     let mut state = self.clone();
-                    state.update(&Event::Dahai {
-                        actor: self.player_id,
-                        pai: tile,
-                        tsumogiri: Some(tile) == state.last_self_tsumo,
-                    })?;
-                    let table = state.single_player_tables(options)?;
-                    Ok(table.into_iter().next().expect("No candidates"))
+                    state
+                        .update(&Event::Dahai {
+                            actor: self.player_id,
+                            pai: tile,
+                            tsumogiri: Some(tile) == state.last_self_tsumo,
+                        })
+                        .unwrap();
+                    let table = state.single_player_tables(options);
+                    let mut candidate = table.into_iter().next().expect("No candidates");
+                    candidate.tile = tile;
+                    candidate
                 })
-                .collect::<Result<Vec<_>>>();
+                .collect::<Vec<_>>();
+            let by = if options.maximize_win_prob {
+                CandidateColumn::WinProb
+            } else {
+                CandidateColumn::EV
+            };
+            candidates.sort_by(|l, r| r.cmp(l, by));
+            return candidates;
         }
 
         let mut can_discard = self.last_cans.can_discard;
@@ -597,14 +610,14 @@ impl PlayerState {
             min_score: options.min_score.filter(|_| !self.riichi_declared[0]),
         };
 
-        let mut max_ev_table = sp_calc.calc(init_state, can_discard, tsumos_left, cur_shanten)?;
+        let mut max_ev_table = sp_calc.calc(init_state, can_discard, tsumos_left, cur_shanten).unwrap();
         if is_discard_after_riichi {
             max_ev_table[0].tile = self.last_self_tsumo.unwrap();
         }
 
         max_ev_table.retain(|candidate| candidate.tile.is_unknown() || !self.forbidden_tiles[candidate.tile.deaka().as_usize()]);
 
-        Ok(max_ev_table)
+        max_ev_table
     }
 
     /// Possible actionable events for the current state, excluding dahai
@@ -742,42 +755,39 @@ impl PlayerState {
         events
     }
 
-    /// Single player tables after possible actionable events
-    pub fn single_player_tables_after_actions(&self, options: &SPOptions) -> Vec<(Option<Event>, Result<Vec<Candidate>>)> {
-        let mut tables = vec![];
-        if self.last_cans.can_riichi {
-            // if can_riichi then no action is equivalent to an explicit deny of riichi
-            let mut state = self.clone();
-            state.last_cans.can_riichi = false;
-            tables.push((None, state.single_player_tables(options)));
-        } else {
-            tables.push((None, self.single_player_tables(options)));
-        }
-        for event in self.possible_actions() {
-            let mut state = self.clone();
-            state.update(&event).unwrap();
-            tables.push((Some(event), state.single_player_tables(options)));
-        }
-        tables
-    }
-
     /// Single player tables for every possible event including dahai
     /// If candidates cannot be calculated for an event that we can do, they will be None
-    /// Same as single_player_tables, candidates are sorted.
-    pub fn single_player_tables_for_events(&self, options: &SPOptions) -> Vec<(Event, Candidate)> {
+    /// candidates are sorted, same as single_player_tables.
+    pub fn single_player_tables_for_events(&self, options: &SPOptions) -> Vec<EventCandidate> {
         let mut table = vec![];
-        for (event, candidates) in self.single_player_tables_after_actions(options) {
-            if let Some(event) = event {
-                let candidate = if let Some(mut candidate) = candidates.unwrap().into_iter().next() {
-                    candidate.tile = t!(?);
-                    candidate
-                } else {
-                    // No valid discard that keeps shanten
-                    Candidate::default()
-                };
-                table.push((event, candidate));
+        for event in self.possible_actions().iter().chain(once(&Event::None)) {
+            let mut state = self.clone();
+            if matches!(event, Event::None) {
+                // no action is equivalent to an explicit deny of riichi
+                state.last_cans.can_riichi = false;
             } else {
-                for candidate in candidates.unwrap() {
+                state.update(event).unwrap();
+            }
+            let mut shanten = state.real_time_shanten();
+            if shanten == -1 {
+                shanten = 0;
+            }
+            let candidates = state.single_player_tables(options);
+            if !matches!(event, Event::None) {
+                let candidate = candidates.into_iter().next().unwrap_or_default();
+                table.push(EventCandidate {
+                    event: event.clone(),
+                    tenpai_probs: candidate.tenpai_probs,
+                    win_probs: candidate.win_probs,
+                    exp_values: candidate.exp_values,
+                    required_tiles: candidate.required_tiles,
+                    num_required_tiles: candidate.num_required_tiles,
+                    shanten_down: candidate.shanten_down,
+                    shanten: shanten + candidate.shanten_down as i8,
+                    yaku: candidate.yaku,
+                });
+            } else {
+                for candidate in candidates {
                     let event = if candidate.tile == t!(?) {
                         Event::None
                     } else {
@@ -787,16 +797,40 @@ impl PlayerState {
                             tsumogiri: Some(candidate.tile) == self.last_self_tsumo,
                         }
                     };
-                    table.push((event, candidate));
+                    table.push(EventCandidate {
+                        event: event.clone(),
+                        tenpai_probs: candidate.tenpai_probs,
+                        win_probs: candidate.win_probs,
+                        exp_values: candidate.exp_values,
+                        required_tiles: candidate.required_tiles,
+                        num_required_tiles: candidate.num_required_tiles,
+                        shanten_down: candidate.shanten_down,
+                        shanten: shanten + candidate.shanten_down as i8,
+                        yaku: candidate.yaku,
+                    });
                 }
             }
         }
+
         let by = if options.maximize_win_prob {
             CandidateColumn::WinProb
         } else {
             CandidateColumn::EV
         };
-        table.sort_unstable_by(|(_, r), (_, l)| l.cmp(r, by));
+        // slight motivation for 6-shanten hands to prefer keeping yakuhai and dora
+        let is_valuable_dahai = |event: &Event| {
+            matches!(event, Event::Dahai { pai, .. }
+                if [self.bakaze, self.jikaze]
+                    .into_iter()
+                    .chain(t!(P, F, C))
+                    .chain(self.dora_indicators.iter().map(|t| t.next()))
+                    .any(|tile| tile == *pai)
+            )
+        };
+        table.sort_unstable_by(|l, r| {
+            r.cmp(l, by)
+                .then_with(|| is_valuable_dahai(&l.event).cmp(&is_valuable_dahai(&r.event)))
+        });
 
         table
     }

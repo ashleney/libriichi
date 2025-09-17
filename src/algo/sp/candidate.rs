@@ -1,7 +1,8 @@
 use super::MAX_TSUMOS_LEFT;
 use super::tile::RequiredTile;
 use crate::algo::agari::yaku::{YAKU_COUNT, yaku};
-use crate::tile::Tile;
+use crate::mjai::Event;
+use crate::tile::{DISCARD_PRIORITIES, Tile};
 use std::cmp::Ordering;
 use tinyvec::ArrayVec;
 
@@ -34,6 +35,19 @@ pub struct Candidate {
     /// 向聴戻しになるかどうか
     pub shanten_down: bool,
     /// Chances of a hand winning with certain yaku
+    pub yaku: ArrayVec<[WeightedYaku; MAX_TSUMOS_LEFT]>,
+}
+
+#[derive(Debug, Default)]
+pub struct EventCandidate {
+    pub event: Event,
+    pub tenpai_probs: ArrayVec<[f32; MAX_TSUMOS_LEFT]>,
+    pub win_probs: ArrayVec<[f32; MAX_TSUMOS_LEFT]>,
+    pub exp_values: ArrayVec<[f32; MAX_TSUMOS_LEFT]>,
+    pub required_tiles: ArrayVec<[RequiredTile; 34]>,
+    pub num_required_tiles: u8,
+    pub shanten_down: bool,
+    pub shanten: i8,
     pub yaku: ArrayVec<[WeightedYaku; MAX_TSUMOS_LEFT]>,
 }
 
@@ -236,6 +250,55 @@ impl Default for WeightedYaku {
             dora: 0.0,
             aka_dora: 0.0,
             ura_dora: 0.0,
+        }
+    }
+}
+
+impl EventCandidate {
+    pub fn cmp(&self, other: &Self, by: CandidateColumn) -> Ordering {
+        macro_rules! cmp_first {
+            ($self_slice:expr, $other_slice:expr) => {{
+                let self_val = $self_slice.first().copied().unwrap_or(0.);
+                let other_val = $other_slice.first().copied().unwrap_or(0.);
+                self_val.total_cmp(&other_val)
+            }};
+        }
+
+        match by {
+            CandidateColumn::EV => match cmp_first!(self.exp_values, other.exp_values) {
+                Ordering::Equal => self.cmp(other, CandidateColumn::WinProb),
+                o => o,
+            },
+            CandidateColumn::WinProb => match cmp_first!(self.win_probs, other.win_probs) {
+                Ordering::Equal => self.cmp(other, CandidateColumn::TenpaiProb),
+                o => o,
+            },
+            CandidateColumn::TenpaiProb => match cmp_first!(self.tenpai_probs, other.tenpai_probs) {
+                Ordering::Equal => self.cmp(other, CandidateColumn::NotShantenDown),
+                o => o,
+            },
+            CandidateColumn::NotShantenDown => match self.shanten.cmp(&other.shanten) {
+                Ordering::Equal => self.cmp(other, CandidateColumn::NumRequiredTiles),
+                o => o,
+            },
+            CandidateColumn::NumRequiredTiles => match self.num_required_tiles.cmp(&other.num_required_tiles) {
+                Ordering::Equal => self.cmp(other, CandidateColumn::DiscardPriority),
+                o => o,
+            },
+            // state should order later to prioritize keeping yakuhai
+            CandidateColumn::DiscardPriority => {
+                let l = match self.event {
+                    Event::Dahai { pai, .. } => DISCARD_PRIORITIES[pai.as_usize()],
+                    Event::None => 8,
+                    _ => 0,
+                };
+                let r = match other.event {
+                    Event::Dahai { pai, .. } => DISCARD_PRIORITIES[pai.as_usize()],
+                    Event::None => 8,
+                    _ => 0,
+                };
+                l.cmp(&r)
+            }
         }
     }
 }

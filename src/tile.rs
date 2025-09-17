@@ -17,7 +17,7 @@ const MJAI_PAI_STRINGS: [&str; MJAI_PAI_STRINGS_LEN] = [
     "5mr", "5pr", "5sr", // aka
     "?",   // unknown
 ];
-const DISCARD_PRIORITIES: [u8; 38] = [
+pub const DISCARD_PRIORITIES: [u8; 38] = [
     6, 5, 4, 3, 2, 3, 4, 5, 6, // m
     6, 5, 4, 3, 2, 3, 4, 5, 6, // p
     6, 5, 4, 3, 2, 3, 4, 5, 6, // s

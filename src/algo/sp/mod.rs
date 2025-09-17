@@ -30,7 +30,7 @@ mod state;
 mod tile;
 
 pub use calc::SPCalculator;
-pub use candidate::{Candidate, CandidateColumn};
+pub use candidate::{Candidate, CandidateColumn, EventCandidate};
 pub use state::{InitState, SPOptions};
 pub use tile::RequiredTile;
 

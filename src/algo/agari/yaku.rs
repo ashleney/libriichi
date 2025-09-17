@@ -53,6 +53,7 @@ pub const YAKU_NAMES: [[&str; 3]; YAKU_COUNT] = [
     ["純正九蓮宝燈", "True Nine Gates", "Chuuren Poutou"],
 ];
 
+#[macro_export]
 #[rustfmt::skip]
 macro_rules! yaku {
     ("門前清自摸和") => (0_u8);
@@ -108,12 +109,6 @@ macro_rules! yaku {
     ($other:literal) => { compile_error!(concat!("Unknown yaku ", $other)) };
 }
 
-macro_rules! localized_yaku {
-    ($jp:tt, $language:expr) => {{ $crate::algo::agari::yaku::YAKU_NAMES[yaku!($jp) as usize][$language as usize] }};
-}
-
-pub(crate) use {localized_yaku, yaku};
-
 #[derive(Debug, Clone, Copy)]
 pub enum YakuLanguage {
     Japanese = 0,
@@ -125,6 +120,16 @@ pub enum YakuLanguage {
 pub const fn localize_yaku(yaku: u8, language: YakuLanguage) -> &'static str {
     YAKU_NAMES[yaku as usize][language as usize]
 }
+
+#[macro_export]
+macro_rules! localized_yaku {
+    ($jp:tt, $language:expr) => {{
+        use $crate::algo::agari::yaku::localize_yaku;
+        localize_yaku(yaku!($jp), $language)
+    }};
+}
+
+pub(crate) use {localized_yaku, yaku};
 
 #[cfg(test)]
 mod test {
