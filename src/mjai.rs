@@ -22,8 +22,17 @@ pub enum Event {
     None,
 
     StartGame {
+        // modern mjai
         #[serde(default)]
         id: Option<u8>,
+        // mortal's subset of original mjai
+        #[serde(default)]
+        names: [String; 4],
+        // akochan
+        #[serde(default)]
+        kyoku_first: u8,
+        #[serde(default)]
+        aka_flag: bool,
     },
     StartKyoku {
         bakaze: Tile,
@@ -178,6 +187,25 @@ impl Event {
         matches!(self, Self::ReachAccepted { .. } | Self::Dora { .. } | Self::Hora { .. })
     }
 
+    #[inline]
+    pub(crate) const fn naki_info(&self) -> Option<(u8, Tile)> {
+        match *self {
+            Self::Chi { target, pai, .. } | Self::Pon { target, pai, .. } | Self::Daiminkan { target, pai, .. } => {
+                Some((target, pai))
+            }
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn naki_to_ord(&self) -> i8 {
+        match *self {
+            Self::Chi { .. } => 0,
+            Self::Pon { .. } => 1,
+            _ => -1,
+        }
+    }
+
     pub fn to_decision_string(&self) -> String {
         match self {
             Self::Dahai { pai, .. } => pai.to_string(),
@@ -236,6 +264,12 @@ mod test {
     use super::*;
 
     use serde_json::{self as json, Map, Number, Value, json};
+
+    #[test]
+    fn optional_field_deser() {
+        let a = r#"{"type":"hora","actor":0,"target":0}"#;
+        serde_json::from_str::<Event>(a).unwrap();
+    }
 
     #[test]
     fn json_consistency() {

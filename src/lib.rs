@@ -94,6 +94,7 @@
 )]
 
 pub mod chi_type;
+pub mod convlog;
 mod macros;
 pub mod mjai;
 pub mod state;
