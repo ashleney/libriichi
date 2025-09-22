@@ -23,10 +23,7 @@ pub enum Event {
 
     StartGame {
         #[serde(default)]
-        names: [String; 4],
-
-        /// Consists of (nonce, key).
-        seed: Option<(u64, u64)>,
+        id: Option<u8>,
     },
     StartKyoku {
         bakaze: Tile,
