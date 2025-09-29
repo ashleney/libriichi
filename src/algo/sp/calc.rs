@@ -59,6 +59,7 @@ pub struct SPCalculator<'a> {
     pub dora_indicators: &'a [Tile],
     pub calc_double_riichi: bool,
     pub calc_haitei: bool,
+    pub calc_ippatsu: bool,
     pub prefer_riichi: bool,
     pub sort_result: bool,
 
@@ -381,7 +382,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
                         // i 巡目で聴牌の場合はダブル立直成立
                         let win_double_riichi = assume_riichi && self.sup.calc_double_riichi && i == 0;
                         // i 巡目で聴牌し、次の巡目で和了の場合は一発成立
-                        let win_ippatsu = assume_riichi;
+                        let win_ippatsu = assume_riichi && self.sup.calc_ippatsu;
                         // 最後の巡目で和了の場合は海底撈月成立
                         let win_haitei = self.sup.calc_haitei && i == MAX_TSUMO - 1;
                         let han_plus = win_double_riichi as usize + win_ippatsu as usize + win_haitei as usize;
@@ -531,7 +532,7 @@ impl<const MAX_TSUMO: usize> SPCalculatorState<'_, MAX_TSUMO> {
                             // i 巡目で聴牌の場合はダブル立直成立
                             let win_double_riichi = assume_riichi && self.sup.calc_double_riichi && i == 0;
                             // i 巡目で聴牌し、次の巡目で和了の場合は一発成立
-                            let win_ippatsu = assume_riichi && j == i;
+                            let win_ippatsu = assume_riichi && self.sup.calc_ippatsu && j == i;
                             // 最後の巡目で和了の場合は海底撈月成立
                             let win_haitei = self.sup.calc_haitei && j == MAX_TSUMO - 1;
                             let han_plus = win_double_riichi as usize + win_ippatsu as usize + win_haitei as usize;
@@ -889,6 +890,7 @@ mod test {
             dora_indicators: &t![P,],
             calc_double_riichi: false,
             calc_haitei: false,
+            calc_ippatsu: true,
             sort_result: true,
             maximize_win_prob: false,
             max_shanten: 3,
@@ -957,6 +959,7 @@ mod test {
             dora_indicators: &t![6m,],
             calc_double_riichi: true,
             calc_haitei: true,
+            calc_ippatsu: true,
             sort_result: true,
             maximize_win_prob: false,
             max_shanten: 3,
@@ -1005,6 +1008,7 @@ mod test {
             dora_indicators: &t![1m,],
             calc_double_riichi: false,
             calc_haitei: false,
+            calc_ippatsu: true,
             sort_result: true,
             maximize_win_prob: false,
             max_shanten: 3,
@@ -1052,6 +1056,7 @@ mod test {
             dora_indicators: &t![6m,],
             calc_double_riichi: true,
             calc_haitei: true,
+            calc_ippatsu: true,
             sort_result: true,
             maximize_win_prob: true,
             max_shanten: 3,

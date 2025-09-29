@@ -3,6 +3,7 @@ use std::iter::once;
 use super::PlayerState;
 use crate::algo::agari::calc::{Agari, AgariCalculator, AgariWithYaku};
 use crate::algo::agari::yaku::yaku;
+use crate::algo::danger::{PlayerDanger, calculate_board_danger};
 use crate::algo::point::Point;
 use crate::algo::shanten;
 use crate::algo::sp::{Candidate, CandidateColumn, EventCandidate, InitState, SPCalculator, SPOptions};
@@ -601,7 +602,8 @@ impl PlayerState {
             prefer_riichi,
             dora_indicators: &self.dora_indicators,
             calc_double_riichi,
-            calc_haitei,
+            calc_haitei: calc_haitei && options.calc_haitei,
+            calc_ippatsu: !self.riichi_accepted[0] && options.calc_ippatsu,
             sort_result: true,
             maximize_win_prob: options.maximize_win_prob,
             max_shanten: options.max_shanten,
@@ -833,5 +835,11 @@ impl PlayerState {
         });
 
         table
+    }
+
+    /// Calculate the chances of players having certain waits assuming they're tenpai
+    /// returns relative to player
+    pub fn calculate_danger(&self) -> [PlayerDanger; 4] {
+        calculate_board_danger(self.tiles_seen, &self.kawa, &self.dora_indicators)
     }
 }

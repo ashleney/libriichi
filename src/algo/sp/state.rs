@@ -214,6 +214,11 @@ pub struct SPOptions {
     /// Minimum point score of a hand to be considered as winning, assuming best-case ura-dora
     /// None = account for all hands
     pub min_score: Option<i32>,
+    /// Whether to calc haitei if we're the candidate for it
+    /// Cannot form a valid hand by itself
+    pub calc_haitei: bool,
+    /// Whether to calc ippatsu if we can riichi
+    pub calc_ippatsu: bool,
 }
 
 impl Default for SPOptions {
@@ -224,6 +229,8 @@ impl Default for SPOptions {
             calc_tegawari: None,
             calc_shanten_down: None,
             min_score: None,
+            calc_haitei: true,
+            calc_ippatsu: true,
         }
     }
 }
