@@ -2,9 +2,9 @@ use crate::{convlog::KyokuFilter, tile::Tile};
 
 use super::json_scheme::{ActionItem, KyokuMeta, RawLog, ResultItem};
 
-use anyhow::{Error, Result, bail};
+use anyhow::{Context, Error, Result, bail};
 use serde::Serialize;
-use serde_json::{self as json, Value};
+use serde_json::{self as json};
 
 /// The overview structure of log in tenhou.net/6 format.
 #[derive(Debug, Clone)]
@@ -43,6 +43,8 @@ pub struct HoraDetail {
     pub who: u8,
     pub target: u8,
     pub score_deltas: [i32; 4],
+    pub pao: Option<u8>,
+    pub yaku: Vec<String>,
 }
 
 /// A group of "配牌", "取" and "出", describing a player's
@@ -124,23 +126,24 @@ impl TryFrom<RawLog> for Log {
                     for detail_tuple in log.results[1..].chunks_exact(2) {
                         if let [
                             ResultItem::ScoreDeltas(score_deltas),
-                            ResultItem::HoraDetail(who_target_tuple),
+                            ResultItem::HoraDetail(hora_detail_array),
                         ] = detail_tuple
                         {
-                            let who = if let Some(Value::Number(n)) = who_target_tuple.first() {
-                                n.as_u64().unwrap_or(0) as u8
-                            } else {
-                                bail!("invalid hora detail");
-                            };
-                            let target = if let Some(Value::Number(n)) = who_target_tuple.get(1) {
-                                n.as_u64().unwrap_or(0) as u8
-                            } else {
-                                bail!("invalid hora detail");
-                            };
+                            let mut hora_detail_iter = hora_detail_array.into_iter();
+                            let who = hora_detail_iter.next().context("invalid hora detail")?.as_u64().unwrap_or(0) as u8;
+                            let target = hora_detail_iter.next().context("invalid hora detail")?.as_u64().unwrap_or(0) as u8;
+                            let pao = hora_detail_iter.next().context("invalid hora detail")?.as_u64().unwrap_or(0) as u8;
+                            let pao = if pao == who { None } else { Some(pao) };
+                            let yaku = hora_detail_iter
+                                .skip(1)
+                                .map(|value| Ok(value.as_str().context("invalid hora detail")?.to_string()))
+                                .collect::<Result<Vec<_>>>()?;
                             let hora_detail = HoraDetail {
                                 score_deltas: *score_deltas,
                                 who,
                                 target,
+                                pao,
+                                yaku,
                             };
                             details.push(hora_detail);
                         }

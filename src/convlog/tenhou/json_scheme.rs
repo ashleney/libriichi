@@ -10,30 +10,30 @@ use serde_with::{FromInto, serde_as};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawLog {
     #[serde(rename = "log")]
-    pub(super) logs: Vec<RawKyoku>,
+    pub logs: Vec<RawKyoku>,
     #[serde(rename = "name")]
-    pub(super) names: [String; 4],
-    pub(super) rule: Rule,
+    pub names: [String; 4],
+    pub rule: Rule,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) ratingc: Option<String>,
+    pub ratingc: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) lobby: Option<i32>,
+    pub lobby: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) dan: Option<Vec<String>>,
+    pub dan: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) rate: Option<Vec<f64>>,
+    pub rate: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) sx: Option<Vec<String>>,
+    pub sx: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct RawPartialLog<'a> {
     #[serde(flatten)]
-    pub(super) parent: &'a RawLog,
+    pub parent: &'a RawLog,
 
     #[serde(rename = "log")]
-    pub(super) logs: &'a [RawKyoku],
+    pub logs: &'a [RawKyoku],
 }
 
 /// An item corresponding to each elements in "配牌", "取" and "出".
@@ -48,35 +48,35 @@ pub enum ActionItem {
 
 #[serde_as]
 #[derive(Debug, Clone, SerializeTuple, DeserializeTuple)]
-pub(super) struct RawKyoku {
-    pub(super) meta: KyokuMeta,
-    pub(super) scoreboard: [i32; 4],
+pub struct RawKyoku {
+    pub meta: KyokuMeta,
+    pub scoreboard: [i32; 4],
     #[serde_as(as = "Vec<FromInto<TenhouTile>>")]
-    pub(super) dora_indicators: Vec<Tile>,
+    pub dora_indicators: Vec<Tile>,
     #[serde_as(as = "Vec<FromInto<TenhouTile>>")]
-    pub(super) ura_indicators: Vec<Tile>,
+    pub ura_indicators: Vec<Tile>,
 
     #[serde_as(as = "[FromInto<TenhouTile>; 13]")]
-    pub(super) haipai_0: [Tile; 13],
-    pub(super) takes_0: Vec<ActionItem>,
-    pub(super) discards_0: Vec<ActionItem>,
+    pub haipai_0: [Tile; 13],
+    pub takes_0: Vec<ActionItem>,
+    pub discards_0: Vec<ActionItem>,
 
     #[serde_as(as = "[FromInto<TenhouTile>; 13]")]
-    pub(super) haipai_1: [Tile; 13],
-    pub(super) takes_1: Vec<ActionItem>,
-    pub(super) discards_1: Vec<ActionItem>,
+    pub haipai_1: [Tile; 13],
+    pub takes_1: Vec<ActionItem>,
+    pub discards_1: Vec<ActionItem>,
 
     #[serde_as(as = "[FromInto<TenhouTile>; 13]")]
-    pub(super) haipai_2: [Tile; 13],
-    pub(super) takes_2: Vec<ActionItem>,
-    pub(super) discards_2: Vec<ActionItem>,
+    pub haipai_2: [Tile; 13],
+    pub takes_2: Vec<ActionItem>,
+    pub discards_2: Vec<ActionItem>,
 
     #[serde_as(as = "[FromInto<TenhouTile>; 13]")]
-    pub(super) haipai_3: [Tile; 13],
-    pub(super) takes_3: Vec<ActionItem>,
-    pub(super) discards_3: Vec<ActionItem>,
+    pub haipai_3: [Tile; 13],
+    pub takes_3: Vec<ActionItem>,
+    pub discards_3: Vec<ActionItem>,
 
-    pub(super) results: Vec<ResultItem>,
+    pub results: Vec<ResultItem>,
 }
 
 #[derive(Debug, Clone, SerializeTuple, DeserializeTuple)]
@@ -88,7 +88,7 @@ pub struct KyokuMeta {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-pub(super) enum ResultItem {
+pub enum ResultItem {
     Status(String),
     ScoreDeltas([i32; 4]),
     HoraDetail(Vec<Value>),
@@ -96,12 +96,12 @@ pub(super) enum ResultItem {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub(super) struct Rule {
-    pub(super) disp: String,
-    pub(super) aka: u8,
-    pub(super) aka51: u8,
-    pub(super) aka52: u8,
-    pub(super) aka53: u8,
+pub struct Rule {
+    pub disp: String,
+    pub aka: u8,
+    pub aka51: u8,
+    pub aka52: u8,
+    pub aka53: u8,
 }
 
 impl RawLog {
