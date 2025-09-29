@@ -290,13 +290,13 @@ pub fn calculate_board_danger(
         .iter()
         .enumerate()
         .map(|(player, &safe_tiles)| {
-            let discards_before_riichi = kawa[player + 1]
+            let discards_before_riichi = kawa[player]
                 .iter()
                 .filter_map(|item| item.as_ref().map(|item| item.sutehai))
                 .take_while(|item| !item.is_riichi)
                 .map(|x| x.tile.as_u8())
                 .collect::<Vec<_>>();
-            let riichi_tile = kawa[player + 1]
+            let riichi_tile = kawa[player]
                 .iter()
                 .filter_map(|item| item.as_ref().map(|item| item.sutehai))
                 .find(|item| item.is_riichi)
