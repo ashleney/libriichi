@@ -4,7 +4,7 @@ use super::json_scheme::{ActionItem, KyokuMeta, RawLog, ResultItem};
 
 use anyhow::{Context, Error, Result, bail};
 use serde::Serialize;
-use serde_json::{self as json};
+use serde_json;
 
 /// The overview structure of log in tenhou.net/6 format.
 #[derive(Debug, Clone)]
@@ -60,7 +60,7 @@ impl Log {
     /// Parse a tenhou.net/6 log from JSON string.
     #[inline]
     pub fn from_json_str(json_string: &str) -> Result<Self> {
-        let raw_log: RawLog = json::from_str(json_string)?;
+        let raw_log: RawLog = serde_json::from_str(json_string)?;
         Self::try_from(raw_log)
     }
 
@@ -129,14 +129,14 @@ impl TryFrom<RawLog> for Log {
                             ResultItem::HoraDetail(hora_detail_array),
                         ] = detail_tuple
                         {
-                            let mut hora_detail_iter = hora_detail_array.into_iter();
+                            let mut hora_detail_iter = hora_detail_array.iter();
                             let who = hora_detail_iter.next().context("invalid hora detail")?.as_u64().unwrap_or(0) as u8;
                             let target = hora_detail_iter.next().context("invalid hora detail")?.as_u64().unwrap_or(0) as u8;
                             let pao = hora_detail_iter.next().context("invalid hora detail")?.as_u64().unwrap_or(0) as u8;
                             let pao = if pao == who { None } else { Some(pao) };
                             let yaku = hora_detail_iter
                                 .skip(1)
-                                .map(|value| Ok(value.as_str().context("invalid hora detail")?.to_string()))
+                                .map(|value| Ok(value.as_str().context("invalid hora detail")?.to_owned()))
                                 .collect::<Result<Vec<_>>>()?;
                             let hora_detail = HoraDetail {
                                 score_deltas: *score_deltas,

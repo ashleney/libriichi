@@ -2,6 +2,7 @@ use crate::{chi_type::ChiType, tile::Tile};
 use std::error::Error;
 use std::fmt;
 
+use anyhow::{Result, bail};
 use derivative::Derivative;
 use serde::{Deserialize, Serialize};
 use serde_with::{TryFromInto, serde_as, skip_serializing_none};
@@ -206,10 +207,10 @@ impl Event {
         }
     }
 
-    pub fn to_decision_string(&self) -> String {
-        match self {
+    pub fn to_decision_string(&self) -> Result<String> {
+        Ok(match self {
             Self::Dahai { pai, .. } => pai.to_string(),
-            Self::None => "pass".to_owned(),
+            Self::Reach { .. } => "reach".to_owned(),
             Self::Chi { pai, consumed, .. } => match ChiType::new(*consumed, *pai) {
                 ChiType::Low => "chi_low".to_owned(),
                 ChiType::Mid => "chi_mid".to_owned(),
@@ -217,11 +218,29 @@ impl Event {
             },
             Self::Pon { .. } => "pon".to_owned(),
             Self::Daiminkan { .. } | Self::Kakan { .. } | Self::Ankan { .. } => "kan".to_owned(),
-            Self::Reach { .. } => "reach".to_owned(),
             Self::Hora { .. } => "hora".to_owned(),
             Self::Ryukyoku { .. } => "ryukyoku".to_owned(),
-            _ => String::new(),
-        }
+            Self::None => "pass".to_owned(),
+            _ => bail!("invalid player event {:?}", self),
+        })
+    }
+
+    pub fn to_decision_bit(&self) -> Result<u8> {
+        Ok(match self {
+            Self::Dahai { pai, .. } => 1 << pai.as_u8(),
+            Self::Reach { .. } => 37,
+            Self::Chi { pai, consumed, .. } => match ChiType::new(*consumed, *pai) {
+                ChiType::Low => 38,
+                ChiType::Mid => 39,
+                ChiType::High => 40,
+            },
+            Self::Pon { .. } => 41,
+            Self::Daiminkan { .. } | Self::Kakan { .. } | Self::Ankan { .. } => 42,
+            Self::Hora { .. } => 43,
+            Self::Ryukyoku { .. } => 44,
+            Self::None => 45,
+            _ => bail!("invalid player event {self:?}"),
+        })
     }
 }
 

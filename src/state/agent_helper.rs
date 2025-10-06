@@ -7,12 +7,12 @@ use crate::algo::danger::{PlayerDanger, calculate_board_danger};
 use crate::algo::point::Point;
 use crate::algo::shanten;
 use crate::algo::sp::{Candidate, CandidateColumn, EventCandidate, InitState, SPCalculator, SPOptions};
-use crate::mjai::Event;
+use crate::mjai::{Event, Metadata};
 use crate::tile::Tile;
 use crate::vec_ops::vec_add_assign;
 use crate::{must_tile, t, tu8, tuz};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use tinyvec::array_vec;
 
 impl PlayerState {
@@ -533,6 +533,7 @@ impl PlayerState {
                     let table = state.single_player_tables(options);
                     let mut candidate = table.into_iter().next().expect("No candidates");
                     candidate.tile = tile;
+                    candidate.shanten_down = true;
                     candidate
                 })
                 .collect::<Vec<_>>();
@@ -622,6 +623,147 @@ impl PlayerState {
         max_ev_table
     }
 
+    /// Akaize a tile if we have its aka version in hand.
+    #[inline]
+    pub const fn conditional_akaize(&self, tile: Tile) -> Tile {
+        match tile.deaka().as_u8() {
+            tu8!(5m) if self.akas_in_hand[0] => t!(5mr),
+            tu8!(5p) if self.akas_in_hand[1] => t!(5pr),
+            tu8!(5s) if self.akas_in_hand[2] => t!(5sr),
+            _ => tile,
+        }
+    }
+
+    /// Convert a single mortal decision mask bit to an Event.
+    /// Requires the current state to determine what tiles to call.
+    pub fn event_from_label(&self, label: u8, at_kan_select: bool) -> Result<Event> {
+        Ok(match label {
+            0..37 => {
+                let tile = must_tile!(label);
+                if !at_kan_select {
+                    Event::Dahai {
+                        actor: self.player_id,
+                        pai: tile,
+                        tsumogiri: self.last_self_tsumo.is_some_and(|t| t == tile),
+                    }
+                } else if !self.last_cans.can_discard {
+                    let tile = self.last_kawa_tile.unwrap();
+                    let consumed = if tile.is_aka() {
+                        [tile.deaka(); 3]
+                    } else {
+                        [tile.akaize(), tile, tile]
+                    };
+                    Event::Daiminkan {
+                        actor: self.player_id,
+                        target: self.last_cans.target_actor,
+                        pai: tile,
+                        consumed,
+                    }
+                } else if self.tehai[tile.as_usize()] == 4 {
+                    Event::Ankan {
+                        actor: self.player_id,
+                        consumed: [tile.akaize(), tile, tile, tile],
+                    }
+                } else {
+                    let can_akaize_target = match tile.as_u8() {
+                        tu8!(5m) => self.akas_in_hand[0],
+                        tu8!(5p) => self.akas_in_hand[1],
+                        tu8!(5s) => self.akas_in_hand[2],
+                        _ => false,
+                    };
+                    let (pai, consumed) = if can_akaize_target {
+                        (tile.akaize(), [tile.deaka(); 3])
+                    } else {
+                        (tile.deaka(), [tile.akaize(), tile.deaka(), tile.deaka()])
+                    };
+                    Event::Kakan {
+                        actor: self.player_id,
+                        pai,
+                        consumed,
+                    }
+                }
+            }
+            37 => Event::Reach { actor: self.player_id },
+            38 => {
+                let pai = self.last_kawa_tile.unwrap();
+                let first = pai.next();
+                let consumed = [first, first.next()].map(|tile| self.conditional_akaize(tile));
+                Event::Chi {
+                    actor: self.player_id,
+                    target: self.last_cans.target_actor,
+                    pai,
+                    consumed,
+                }
+            }
+            39 => {
+                let pai = self.last_kawa_tile.unwrap();
+                let consumed = [pai.prev(), pai.next()].map(|tile| self.conditional_akaize(tile));
+                Event::Chi {
+                    actor: self.player_id,
+                    target: self.last_cans.target_actor,
+                    pai,
+                    consumed,
+                }
+            }
+            40 => {
+                let pai = self.last_kawa_tile.unwrap();
+                let last = pai.prev();
+                let consumed = [last.prev(), last].map(|tile| self.conditional_akaize(tile));
+                Event::Chi {
+                    actor: self.player_id,
+                    target: self.last_cans.target_actor,
+                    pai,
+                    consumed,
+                }
+            }
+            41 => {
+                let pai = self.last_kawa_tile.unwrap();
+                let consumed = [self.conditional_akaize(pai), pai.deaka()];
+                Event::Pon {
+                    actor: self.player_id,
+                    target: self.last_cans.target_actor,
+                    pai,
+                    consumed,
+                }
+            }
+            42 => bail!("cannot turn plain kan label into event"),
+            43 => Event::Hora {
+                actor: self.player_id,
+                target: self.last_cans.target_actor,
+                deltas: None,
+                ura_markers: None,
+            },
+            44 => Event::Ryukyoku { deltas: None },
+            45 => Event::None,
+            _ => bail!("unknown mask {label}"),
+        })
+    }
+
+    /// Transform the metadata of a mortal event into a vector of events and their q-values
+    pub fn event_meta_to_events(&self, meta: Metadata) -> Vec<(Event, f32)> {
+        let (Some(mask_bits), Some(q_values)) = (meta.mask_bits, meta.q_values) else {
+            return vec![];
+        };
+        let mut events = vec![];
+        for (label, q_value) in (0..46).filter(|i| (mask_bits >> i) & 0b1 == 0b1).zip(q_values) {
+            if label == 42 {
+                let Some(ref kan_meta) = meta.kan_select else {
+                    continue;
+                };
+                let (Some(mask_bits), Some(q_values)) = (kan_meta.mask_bits, &kan_meta.q_values) else {
+                    continue;
+                };
+                for (kan_label, &kan_q_value) in (0..37).filter(|i| (mask_bits >> i) & 0b1 == 0b1).zip(q_values) {
+                    events.push((self.event_from_label(kan_label, true).unwrap(), kan_q_value));
+                }
+            } else {
+                events.push((self.event_from_label(label, false).unwrap(), q_value));
+            }
+        }
+
+        events
+    }
+
     /// Possible actionable events for the current state, excluding dahai
     pub fn possible_actions(&self) -> Vec<Event> {
         let mut events: Vec<Event> = vec![];
@@ -632,17 +774,7 @@ impl PlayerState {
         if self.last_cans.can_chi_low {
             let pai = self.last_kawa_tile.unwrap();
             let first = pai.next();
-            let can_akaize_consumed = match pai.as_u8() {
-                tu8!(3m) | tu8!(4m) => self.akas_in_hand[0],
-                tu8!(3p) | tu8!(4p) => self.akas_in_hand[1],
-                tu8!(3s) | tu8!(4s) => self.akas_in_hand[2],
-                _ => false,
-            };
-            let consumed = if can_akaize_consumed {
-                [first.akaize(), first.next().akaize()]
-            } else {
-                [first, first.next()]
-            };
+            let consumed = [first, first.next()].map(|tile| self.conditional_akaize(tile));
             events.push(Event::Chi {
                 actor: self.player_id,
                 target: self.last_cans.target_actor,
@@ -652,17 +784,7 @@ impl PlayerState {
         }
         if self.last_cans.can_chi_mid {
             let pai = self.last_kawa_tile.unwrap();
-            let can_akaize_consumed = match pai.as_u8() {
-                tu8!(4m) | tu8!(6m) => self.akas_in_hand[0],
-                tu8!(4p) | tu8!(6p) => self.akas_in_hand[1],
-                tu8!(4s) | tu8!(6s) => self.akas_in_hand[2],
-                _ => false,
-            };
-            let consumed = if can_akaize_consumed {
-                [pai.prev().akaize(), pai.next().akaize()]
-            } else {
-                [pai.prev(), pai.next()]
-            };
+            let consumed = [pai.prev(), pai.next()].map(|tile| self.conditional_akaize(tile));
             events.push(Event::Chi {
                 actor: self.player_id,
                 target: self.last_cans.target_actor,
@@ -673,17 +795,7 @@ impl PlayerState {
         if self.last_cans.can_chi_high {
             let pai = self.last_kawa_tile.unwrap();
             let last = pai.prev();
-            let can_akaize_consumed = match pai.as_u8() {
-                tu8!(6m) | tu8!(7m) => self.akas_in_hand[0],
-                tu8!(6p) | tu8!(7p) => self.akas_in_hand[1],
-                tu8!(6s) | tu8!(7s) => self.akas_in_hand[2],
-                _ => false,
-            };
-            let consumed = if can_akaize_consumed {
-                [last.prev().akaize(), last.akaize()]
-            } else {
-                [last.prev(), last]
-            };
+            let consumed = [last.prev(), last].map(|tile| self.conditional_akaize(tile));
             events.push(Event::Chi {
                 actor: self.player_id,
                 target: self.last_cans.target_actor,
@@ -693,17 +805,7 @@ impl PlayerState {
         }
         if self.last_cans.can_pon {
             let pai = self.last_kawa_tile.unwrap();
-            let can_akaize_consumed = match pai.as_u8() {
-                tu8!(5m) => self.akas_in_hand[0],
-                tu8!(5p) => self.akas_in_hand[1],
-                tu8!(5s) => self.akas_in_hand[2],
-                _ => false,
-            };
-            let consumed = if can_akaize_consumed {
-                [pai.akaize(), pai.deaka()]
-            } else {
-                [pai.deaka(); 2]
-            };
+            let consumed = [self.conditional_akaize(pai), pai.deaka()];
             events.push(Event::Pon {
                 actor: self.player_id,
                 target: self.last_cans.target_actor,
@@ -726,10 +828,10 @@ impl PlayerState {
             });
         }
         if self.last_cans.can_ankan {
-            for tile in &self.ankan_candidates {
+            for &tile in &self.ankan_candidates {
                 events.push(Event::Ankan {
                     actor: self.player_id,
-                    consumed: [tile.akaize(), *tile, *tile, *tile],
+                    consumed: [tile.akaize(), tile, tile, tile],
                 });
             }
         }
@@ -770,10 +872,7 @@ impl PlayerState {
             } else {
                 state.update(event).unwrap();
             }
-            let mut shanten = state.real_time_shanten();
-            if shanten == -1 {
-                shanten = 0;
-            }
+            let shanten = state.real_time_shanten();
             let candidates = state.single_player_tables(options);
             if !matches!(event, Event::None) {
                 let candidate = candidates.into_iter().next().unwrap_or_default();
