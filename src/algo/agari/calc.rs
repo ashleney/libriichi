@@ -1337,7 +1337,7 @@ mod test {
             is_ron: true,
         };
         let yaku = calc.search_yakus().unwrap();
-        assert_eq!(yaku, Agari::Yakuman(3));
+        assert_eq!(yaku, Agari::Yakuman(5));
 
         let tehai = hand("1m 789p 789s 1m").unwrap();
         let calc = AgariCalculator {

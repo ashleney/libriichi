@@ -1,4 +1,7 @@
-use crate::{convlog::KyokuFilter, tile::Tile};
+use crate::{
+    convlog::tenhou::json_scheme::{RawKyoku, Rule},
+    tile::Tile,
+};
 
 use super::json_scheme::{ActionItem, KyokuMeta, RawLog, ResultItem};
 
@@ -7,7 +10,7 @@ use serde::Serialize;
 use serde_json;
 
 /// The overview structure of log in tenhou.net/6 format.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Log {
     pub names: [String; 4],
     pub game_length: GameLength,
@@ -15,14 +18,15 @@ pub struct Log {
     pub kyokus: Vec<Kyoku>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
 pub enum GameLength {
+    #[default]
     Hanchan = 0,
     Tonpuu = 4,
 }
 
 /// Contains information about a kyoku.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Kyoku {
     pub meta: KyokuMeta,
     pub scoreboard: [i32; 4],
@@ -49,7 +53,7 @@ pub struct HoraDetail {
 
 /// A group of "配牌", "取" and "出", describing a player's
 /// gaming status and actions throughout a kyoku.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ActionTable {
     pub haipai: [Tile; 13],
     pub takes: Vec<ActionItem>,
@@ -62,11 +66,6 @@ impl Log {
     pub fn from_json_str(json_string: &str) -> Result<Self> {
         let raw_log: RawLog = serde_json::from_str(json_string)?;
         Self::try_from(raw_log)
-    }
-
-    #[inline]
-    pub fn filter_kyokus(&mut self, kyoku_filter: &KyokuFilter) {
-        self.kyokus.retain(|l| kyoku_filter.test(l.meta.kyoku_num, l.meta.honba));
     }
 }
 
@@ -115,9 +114,7 @@ impl TryFrom<RawLog> for Log {
                         discards: log.discards_3,
                     },
                 ],
-                end_status: EndStatus::Ryukyoku {
-                    score_deltas: [0; 4], // default
-                },
+                end_status: EndStatus::default(),
             };
 
             if let Some(ResultItem::Status(status_text)) = log.results.first() {
@@ -168,5 +165,90 @@ impl TryFrom<RawLog> for Log {
             has_aka,
             kyokus,
         })
+    }
+}
+
+impl TryFrom<Log> for RawLog {
+    type Error = Error;
+
+    fn try_from(log: Log) -> Result<Self, Self::Error> {
+        let Log {
+            names,
+            game_length,
+            has_aka,
+            kyokus,
+        } = log;
+
+        let disp = if matches!(game_length, GameLength::Hanchan) {
+            "南"
+        } else {
+            "東"
+        };
+        let raw_kyokus = kyokus
+            .into_iter()
+            .map(|kyoku| {
+                let results = match kyoku.end_status {
+                    EndStatus::Hora { details } => std::iter::once(ResultItem::Status("和了".to_owned()))
+                        .chain(details.into_iter().flat_map(|detail| {
+                            [
+                                ResultItem::ScoreDeltas(detail.score_deltas),
+                                ResultItem::HoraDetail(vec![
+                                    detail.who.into(),
+                                    detail.target.into(),
+                                    detail.pao.unwrap_or(detail.who).into(),
+                                ]),
+                            ]
+                        }))
+                        .collect::<Vec<_>>(),
+                    EndStatus::Ryukyoku { score_deltas } => vec![
+                        ResultItem::Status("Ryuukyoku".to_owned()),
+                        ResultItem::ScoreDeltas(score_deltas),
+                    ],
+                };
+                let [a, b, c, d] = kyoku.action_tables;
+                RawKyoku {
+                    meta: kyoku.meta,
+                    scoreboard: kyoku.scoreboard,
+                    dora_indicators: kyoku.dora_indicators,
+                    ura_indicators: kyoku.ura_indicators,
+                    haipai_0: a.haipai,
+                    takes_0: a.takes,
+                    discards_0: a.discards,
+                    haipai_1: b.haipai,
+                    takes_1: b.takes,
+                    discards_1: b.discards,
+                    haipai_2: c.haipai,
+                    takes_2: c.takes,
+                    discards_2: c.discards,
+                    haipai_3: d.haipai,
+                    takes_3: d.takes,
+                    discards_3: d.discards,
+                    results,
+                }
+            })
+            .collect();
+        Ok(Self {
+            logs: raw_kyokus,
+            names,
+            rule: Rule {
+                disp: disp.to_owned(),
+                aka51: has_aka as u8,
+                aka52: has_aka as u8,
+                aka53: has_aka as u8,
+                aka: 0,
+            },
+            ratingc: None,
+            lobby: None,
+            dan: None,
+            rate: None,
+            sx: None,
+            sc: None,
+        })
+    }
+}
+
+impl Default for EndStatus {
+    fn default() -> Self {
+        Self::Ryukyoku { score_deltas: [0; 4] }
     }
 }

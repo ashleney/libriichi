@@ -1,3 +1,4 @@
+//! Tenhou to mjai
 use crate::convlog::tenhou::{ActionItem, EndStatus, Kyoku, Log, TenhouTile};
 use crate::mjai::Event;
 use crate::t;

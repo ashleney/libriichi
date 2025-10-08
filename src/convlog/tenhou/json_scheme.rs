@@ -1,9 +1,10 @@
-use crate::{convlog::KyokuFilter, tile::Tile};
+use crate::tile::Tile;
 
 use super::TenhouTile;
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{ser::PrettyFormatter, Serializer, Value};
 use serde_tuple::{Deserialize_tuple as DeserializeTuple, Serialize_tuple as SerializeTuple};
 use serde_with::{FromInto, serde_as};
 
@@ -25,6 +26,8 @@ pub struct RawLog {
     pub rate: Option<Vec<f64>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sx: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sc: Option<Vec<f32>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -79,7 +82,7 @@ pub struct RawKyoku {
     pub results: Vec<ResultItem>,
 }
 
-#[derive(Debug, Clone, SerializeTuple, DeserializeTuple)]
+#[derive(Debug, Clone, SerializeTuple, DeserializeTuple, Default)]
 pub struct KyokuMeta {
     pub kyoku_num: u8,
     pub honba: u8,
@@ -119,11 +122,6 @@ impl RawLog {
         });
     }
 
-    #[inline]
-    pub fn filter_kyokus(&mut self, kyoku_filter: &KyokuFilter) {
-        self.logs.retain(|l| kyoku_filter.test(l.meta.kyoku_num, l.meta.honba));
-    }
-
     /// Split one raw tenhou.net/6 log into many by kyokus.
     #[must_use]
     pub fn split_by_kyoku(&self) -> Vec<RawPartialLog<'_>> {
@@ -151,6 +149,27 @@ impl RawLog {
     #[must_use]
     pub const fn len(&self) -> usize {
         self.logs.len()
+    }
+
+    /// Serialize into a human-readable String.
+    /// Keeps parity with the downloadlogs.js tampermonkey script
+    pub fn to_string_pretty(&self) -> serde_json::Result<String> {
+        let mut buf = Vec::new();
+        let formatter = PrettyFormatter::with_indent(b"    "); // 4 spaces
+        let mut serializer = Serializer::with_formatter(&mut buf, formatter);
+        self.serialize(&mut serializer)?;
+        let expanded = String::from_utf8(buf).expect("Valid UTF-8 JSON output");
+
+        let patterns = [
+            (r"\n\s{7,}", " "),
+            (r"\], \[", "],\n        ["),
+            (r"\n\s+]", " ]"),
+            (r"\n\s+},\n", " },\n"),
+        ];
+        let human = patterns.iter().fold(expanded, |string, (pattern, replacement)| {
+            Regex::new(pattern).unwrap().replace_all(&string, *replacement).into_owned()
+        });
+        Ok(human)
     }
 }
 
