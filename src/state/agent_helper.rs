@@ -939,6 +939,12 @@ impl PlayerState {
     /// Calculate the chances of players having certain waits assuming they're tenpai
     /// returns relative to player
     pub fn calculate_danger(&self) -> [PlayerDanger; 4] {
-        calculate_board_danger(self.tiles_seen, &self.kawa, &self.dora_indicators)
+        calculate_board_danger::<true>(&self.tiles_seen, &self.kawa, &self.dora_indicators)
+    }
+
+    /// Calculate the chances of players waiting on certain tiles assuming they're tenpai
+    /// returns relative to player
+    pub fn calculate_tile_danger(&self) -> [[f32; 34]; 4] {
+        calculate_board_danger::<false>(&self.tiles_seen, &self.kawa, &self.dora_indicators).map(|p| p.tile_weights)
     }
 }

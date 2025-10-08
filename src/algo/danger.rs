@@ -1,5 +1,7 @@
 //! Port of killerducky's tile danger calculation.
 //! original: <https://github.com/killerducky/killer_mortal_gui#dealin-rate>
+use tinyvec::{ArrayVec, array_vec};
+
 use crate::{must_tile, state::item::KawaItem, tile::Tile};
 
 /// Simple kinds of waits used for danger calculation.
@@ -15,8 +17,8 @@ pub enum WaitShape {
 /// Boardstate-agnostic wait type
 #[derive(Debug, Clone)]
 pub struct GeneralWait {
-    pub tiles: Vec<u8>,
-    pub waits: Vec<u8>,
+    pub tiles: ArrayVec<[u8; 2]>,
+    pub waits: ArrayVec<[u8; 2]>,
     pub shape: WaitShape,
 }
 
@@ -94,8 +96,8 @@ pub static POSSIBLE_WAITS: std::sync::LazyLock<Vec<GeneralWait>> = std::sync::La
     for suit in 0..3 {
         for number in 1..7 {
             waits_array.push(GeneralWait {
-                tiles: vec![suit * 9 + number, suit * 9 + number + 1],
-                waits: vec![suit * 9 + number - 1, suit * 9 + number + 2],
+                tiles: array_vec![suit * 9 + number, suit * 9 + number + 1],
+                waits: array_vec![suit * 9 + number - 1, suit * 9 + number + 2],
                 shape: WaitShape::Ryanmen,
             });
         }
@@ -103,8 +105,8 @@ pub static POSSIBLE_WAITS: std::sync::LazyLock<Vec<GeneralWait>> = std::sync::La
     for suit in 0..3 {
         for number in 1..8 {
             waits_array.push(GeneralWait {
-                tiles: vec![suit * 9 + number - 1, suit * 9 + number + 1],
-                waits: vec![suit * 9 + number],
+                tiles: array_vec![suit * 9 + number - 1, suit * 9 + number + 1],
+                waits: array_vec![suit * 9 + number],
                 shape: WaitShape::Kanchan,
             });
         }
@@ -112,13 +114,13 @@ pub static POSSIBLE_WAITS: std::sync::LazyLock<Vec<GeneralWait>> = std::sync::La
 
     for suit in 0..3 {
         waits_array.push(GeneralWait {
-            tiles: vec![suit * 9, suit * 9 + 1],
-            waits: vec![suit * 9 + 2],
+            tiles: array_vec![suit * 9, suit * 9 + 1],
+            waits: array_vec![suit * 9 + 2],
             shape: WaitShape::Penchan,
         });
         waits_array.push(GeneralWait {
-            tiles: vec![suit * 9 + 7, suit * 9 + 8],
-            waits: vec![suit * 9 + 6],
+            tiles: array_vec![suit * 9 + 7, suit * 9 + 8],
+            waits: array_vec![suit * 9 + 6],
             shape: WaitShape::Penchan,
         });
     }
@@ -129,13 +131,13 @@ pub static POSSIBLE_WAITS: std::sync::LazyLock<Vec<GeneralWait>> = std::sync::La
                 continue;
             }
             waits_array.push(GeneralWait {
-                tiles: vec![suit * 9 + number],
-                waits: vec![suit * 9 + number],
+                tiles: array_vec![suit * 9 + number],
+                waits: array_vec![suit * 9 + number],
                 shape: WaitShape::Shanpon,
             });
             waits_array.push(GeneralWait {
-                tiles: vec![suit * 9 + number],
-                waits: vec![suit * 9 + number],
+                tiles: array_vec![suit * 9 + number],
+                waits: array_vec![suit * 9 + number],
                 shape: WaitShape::Tanki,
             });
         }
@@ -145,17 +147,21 @@ pub static POSSIBLE_WAITS: std::sync::LazyLock<Vec<GeneralWait>> = std::sync::La
 });
 
 /// Calculate the chances of a player having specific waits
-pub fn calculate_player_danger(
+pub fn calculate_player_danger<const DETAILED: bool>(
     safe_tiles: [bool; 34],
     discards_before_riichi: Vec<u8>,
     riichi_tile: Option<u8>,
     unseen_tiles: [u8; 34],
     doras: Vec<u8>,
 ) -> PlayerDanger {
-    let mut waits = vec![];
+    let mut waits = if DETAILED { Some(Vec::new()) } else { None };
     let mut tile_weights = [0.0; 34];
+
     for wait in POSSIBLE_WAITS.iter() {
         let genbutsu = wait.waits.iter().any(|&tile| safe_tiles[tile as usize]);
+        if !DETAILED {
+            continue;
+        }
         let combinations = if matches!(wait.shape, WaitShape::Shanpon) {
             (unseen_tiles[wait.tiles[0] as usize] * unseen_tiles[wait.tiles[0] as usize].saturating_sub(1)) / 2
         } else {
@@ -227,24 +233,30 @@ pub fn calculate_player_danger(
             }
             weight
         };
+
         for &wait_tile in &wait.waits {
             tile_weights[wait_tile as usize] += weight;
         }
 
-        waits.push(Wait {
-            kind: wait.clone(),
-            genbutsu,
-            combinations,
-            ura_suji,
-            matagi_suji_early,
-            matagi_suji_riichi,
-            riichi_suji_trap,
-            dora_involved,
-            weight,
-        });
+        if DETAILED {
+            waits.as_mut().unwrap().push(Wait {
+                kind: wait.clone(),
+                genbutsu,
+                combinations,
+                ura_suji,
+                matagi_suji_early,
+                matagi_suji_riichi,
+                riichi_suji_trap,
+                dora_involved,
+                weight,
+            });
+        }
     }
 
-    PlayerDanger { tile_weights, waits }
+    PlayerDanger {
+        tile_weights,
+        waits: waits.unwrap(),
+    }
 }
 
 /// Determine genbutsu tiles based on furiten rules
@@ -280,8 +292,8 @@ pub fn determine_safe_tiles(kawa: &[tinyvec::TinyVec<[Option<KawaItem>; 24]>; 4]
 }
 
 /// Calculate the danger of any player having a specific wait
-pub fn calculate_board_danger(
-    tiles_seen: [u8; 34],
+pub fn calculate_board_danger<const DETAILED: bool>(
+    tiles_seen: &[u8; 34],
     kawa: &[tinyvec::TinyVec<[Option<KawaItem>; 24]>; 4],
     dora_indicators: &[Tile],
 ) -> [PlayerDanger; 4] {
@@ -301,7 +313,7 @@ pub fn calculate_board_danger(
                 .filter_map(|item| item.as_ref().map(|item| item.sutehai))
                 .find(|item| item.is_riichi)
                 .map(|x| x.tile.as_u8());
-            calculate_player_danger(
+            calculate_player_danger::<DETAILED>(
                 safe_tiles,
                 discards_before_riichi,
                 riichi_tile,

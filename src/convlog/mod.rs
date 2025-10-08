@@ -43,7 +43,7 @@ mod test {
         let converted_tenhou = mjai_to_tenhou(&mjai)?.to_string_pretty()?;
         println!("{}", converted_tenhou);
         assert_eq!(tenhou, converted_tenhou);
-        
+
         Ok(())
     }
 }
