@@ -1,10 +1,10 @@
-//! Provides methods to transform mahjong logs from tenhou.net/6 format into
-//! mjai format.
+//! Provides methods to transform mahjong logs from tenhou.net/6 format into mjai format.
+//! original: <https://github.com/Equim-chan/mjai-reviewer/tree/master/convlog>
 
-mod mjai_tenhou;
-mod tenhou_mjai;
-
+pub mod generate;
+pub mod mjai_tenhou;
 pub mod tenhou;
+pub mod tenhou_mjai;
 
 pub use mjai_tenhou::mjai_to_tenhou;
 pub use tenhou_mjai::tenhou_to_mjai;
@@ -41,7 +41,7 @@ mod test {
 }"#;
         let mjai = tenhou_to_mjai(&Log::from_json_str(tenhou)?)?;
         let converted_tenhou = mjai_to_tenhou(&mjai)?.to_string_pretty()?;
-        println!("{}", converted_tenhou);
+        println!("{converted_tenhou}");
         assert_eq!(tenhou, converted_tenhou);
 
         Ok(())

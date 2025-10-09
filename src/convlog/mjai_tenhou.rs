@@ -13,6 +13,7 @@ pub fn mjai_to_tenhou(events: &[Event]) -> Result<RawLog> {
     let mut action_tables = &mut kyoku.action_tables;
 
     let mut event_iter = events.iter();
+    let mut pon_locations = [0; 34];
     while let Some(event) = event_iter.next() {
         match *event {
             Event::StartGame { ref names, aka_flag, .. } => {
@@ -31,7 +32,7 @@ pub fn mjai_to_tenhou(events: &[Event]) -> Result<RawLog> {
             } => {
                 kyokus.push(Kyoku {
                     meta: KyokuMeta {
-                        kyoku_num: (bakaze.as_u8() - tu8!(E)) + kyoku_num - 1,
+                        kyoku_num: (bakaze.as_u8() - tu8!(E)) * 4 + kyoku_num - 1,
                         honba,
                         kyotaku,
                     },
@@ -73,6 +74,7 @@ pub fn mjai_to_tenhou(events: &[Event]) -> Result<RawLog> {
                 pai,
                 consumed,
             } => {
+                pon_locations[pai.deaka().as_usize()] = target;
                 let naki = match (target + 4 - actor) % 4 {
                     3 => {
                         format!(
@@ -108,8 +110,7 @@ pub fn mjai_to_tenhou(events: &[Event]) -> Result<RawLog> {
                 pai,
                 consumed,
             } => {
-                let rel = (target + 4 - actor) % 4;
-                let naki = match rel {
+                let naki = match (target + 4 - actor) % 4 {
                     3 => {
                         format!(
                             "m{}{}{}{}",
@@ -142,10 +143,8 @@ pub fn mjai_to_tenhou(events: &[Event]) -> Result<RawLog> {
                 action_tables[actor as usize].takes.push(ActionItem::Naki(naki));
             }
             Event::Kakan { actor, pai, consumed } => {
-                // TODO: Do proper kan by searching previous events
-                let rel: u8 = 3;
-
-                let naki = match rel {
+                let target = pon_locations[pai.deaka().as_usize()];
+                let naki = match (target + 4 - actor) % 4 {
                     3 => {
                         format!(
                             "k{}{}{}{}",

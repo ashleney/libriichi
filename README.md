@@ -10,6 +10,7 @@ modified libriichi stripped of pyo3 and with some features added.
 ### Added
 - log converter from tenhou to mjai ported from Equim's mjai-reviewer
   - log converter from mjai to tenhou
+  - generation of mjai events from visible state
 - very basic danger calculation ported from killerducky's mortal ui
 - basic parsing of mortal's metadata field for further analysis
 

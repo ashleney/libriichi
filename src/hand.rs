@@ -5,29 +5,27 @@
 //! 5mr ESW).
 
 use crate::tile::Tile;
-use crate::vec_ops::vec_add_assign;
-use crate::{must_tile, tuz};
+use crate::{must_tile, t};
 
-use anyhow::{Result, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
 
-/// Spaces are allowed.
-pub fn hand_with_aka(s: &str) -> Result<[u8; 37]> {
-    // We will be using bytes instead of chars afterwards.
+/// Parse a tenhou representation of tiles into a list of ordered tiles
+pub fn parse_tiles(s: &str) -> Result<Vec<Tile>> {
     ensure!(s.is_ascii(), "hand {s} contains non-ascii content");
 
-    let mut ret = [0; 37];
+    let mut tiles = vec![];
     let mut stack = vec![];
 
     for b in s.as_bytes() {
         match b {
-            b'0'..=b'9' => stack.push((b - b'0') as usize),
+            b'0'..=b'9' => stack.push(b - b'0'),
             b'm' | b'p' | b's' | b'z' => {
                 for t in stack.drain(..) {
-                    let idx = if t == 0 {
+                    let tile = if t == 0 {
                         match b {
-                            b'm' => tuz!(5mr),
-                            b'p' => tuz!(5pr),
-                            b's' => tuz!(5sr),
+                            b'm' => t!(5mr),
+                            b'p' => t!(5pr),
+                            b's' => t!(5sr),
                             _ => bail!("unexpected byte {b}"),
                         }
                     } else {
@@ -38,28 +36,41 @@ pub fn hand_with_aka(s: &str) -> Result<[u8; 37]> {
                             b'z' => 3,
                             _ => unreachable!(),
                         };
-                        kind * 9 + t - 1
+                        must_tile!(kind * 9 + t - 1)
                     };
-                    ret[idx] += 1;
+                    tiles.push(tile);
                 }
             }
-            b' ' | b'\t' | b'\n' => (),
+            _ if b.is_ascii_whitespace() => (),
             _ => bail!("unexpected byte {b}"),
         };
     }
 
+    Ok(tiles)
+}
+
+/// Parse a single string representation of a tenhou tile
+pub fn parse_tile(s: &str) -> Result<Tile> {
+    let tiles = parse_tiles(s)?;
+    ensure!(tiles.len() == 1, "too many tiles");
+    tiles.into_iter().next().context("missing tile")
+}
+
+/// Spaces are allowed.
+pub fn hand_with_aka(s: &str) -> Result<[u8; 37]> {
+    let mut ret = [0; 37];
+    for tile in parse_tiles(s)? {
+        ret[tile.as_usize()] += 1;
+    }
     Ok(ret)
 }
 
 /// Spaces are allowed.
 pub fn hand(s: &str) -> Result<[u8; 34]> {
     let mut ret = [0; 34];
-    let hand = hand_with_aka(s)?;
-    vec_add_assign(&mut ret, &hand);
-    ret[tuz!(5m)] += hand[tuz!(5mr)];
-    ret[tuz!(5p)] += hand[tuz!(5pr)];
-    ret[tuz!(5s)] += hand[tuz!(5sr)];
-
+    for tile in parse_tiles(s)? {
+        ret[tile.deaka().as_usize()] += 1;
+    }
     Ok(ret)
 }
 
