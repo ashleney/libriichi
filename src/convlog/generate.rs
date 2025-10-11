@@ -1,4 +1,5 @@
 //! Generate mjai logs from a representation of the visible board
+use crate::chi_type::ChiType;
 use crate::mjai::Event;
 use crate::tile::Tile;
 use crate::{must_tile, t, tu8, tuz};
@@ -185,124 +186,11 @@ pub fn generate_mjai_logs(board: Board) -> Result<Vec<Event>> {
     let player_id = (4 + oya + board.jikaze.as_u8() - tu8!(E)) % 4;
 
     let player_abs = |player| (player as u8 + player_id) % 4;
+    let player_rel = |player| (4 + player - player_id) % 4;
     let mut scores = board.scores;
     scores.rotate_right(player_id as usize);
     let mut kyotaku = board.kyotaku;
-
-    // process fuuros by creating call events and creating discards we can no longer see
-    // information about some discards is lost, we'll estimate them to be tedashi non-riichi for simplicity
-    let mut called_sutehais_abs: [Vec<(Sutehai, u8)>; 4] = from_fn(|_| vec![]); // rel
-    let mut fuuro_events_rel: [Vec<Event>; 4] = from_fn(|_| vec![]);
-    let mut naki_count_abs = [0; 4];
-    for (rel_player, fuuro) in board.fuuro.iter().enumerate() {
-        let actor = player_abs(rel_player);
-        fuuro_events_rel[rel_player] = fuuro.to_events(actor)?;
-        naki_count_abs[actor as usize] = fuuro_events_rel[rel_player]
-            .iter()
-            .filter(|event| !matches!(event, Event::Kakan { .. }))
-            .count() as u8;
-        for event in &fuuro_events_rel[rel_player] {
-            if let Some((target, pai)) = event.naki_info() {
-                let sutehai = Sutehai {
-                    pai,
-                    tedashi: true,
-                    riichi: false,
-                };
-                called_sutehais_abs[target as usize].push((sutehai, actor));
-            }
-        }
-    }
-
     let at_discard = board.tehai.len() % 3 == 2;
-
-    // construct player turns by attaching calls to the first viable dahai
-    // contains: tsumo or call replacing tsumo, ankan/kakan calls, riichi declaration, dahai, dora reveal
-    // included is the player that will want to call after the last event
-    // the last turn may not have a dahai action if the provided Board is right after a call
-    // unknown tsumo tiles and dora indicators will be filled in later based on what tiles could possibly be in there
-    let mut turns: [Vec<(Vec<Event>, Option<u8>)>; 4] = from_fn(|_| vec![]);
-    for (rel_player, (kawa, fuuro_events)) in board.kawa.iter().zip(fuuro_events_rel).enumerate() {
-        let actor = player_abs(rel_player);
-        let mut fuuro_iter = fuuro_events.into_iter().peekable();
-        let mut kakan_candidates = vec![];
-        for (sutehai, next_player) in called_sutehais_abs[actor as usize]
-            .iter()
-            .map(|(called_sutehai, next_player)| (Some(called_sutehai), Some(next_player)))
-            .chain(kawa.iter().map(|sutehai| (Some(sutehai), None)))
-            .chain(once((None, None)))
-        {
-            let mut reveal_dora_at_discard = false;
-            let mut events = vec![];
-
-            let is_first_oya_act = actor == oya && turns[actor as usize].is_empty();
-            let draw_event = if !is_first_oya_act && let Some(next_event) = fuuro_iter.peek() {
-                match next_event {
-                    Event::Chi { .. } if sutehai.is_none_or(|sutehai| sutehai.tedashi) => fuuro_iter.next().unwrap(),
-                    &Event::Pon { pai, .. } if sutehai.is_none_or(|sutehai| sutehai.tedashi) => {
-                        kakan_candidates.push(pai);
-                        fuuro_iter.next().unwrap()
-                    }
-                    Event::Daiminkan { .. } => {
-                        events.push(fuuro_iter.next().unwrap());
-                        reveal_dora_at_discard = true;
-                        Event::Tsumo { actor, pai: t!(?) }
-                    }
-                    _ => Event::Tsumo { actor, pai: t!(?) },
-                }
-            } else {
-                Event::Tsumo { actor, pai: t!(?) }
-            };
-            events.push(draw_event.clone());
-
-            if !matches!(draw_event, Event::Chi { .. } | Event::Pon { .. }) {
-                while let Some(next_naki) = fuuro_iter.peek() {
-                    match next_naki {
-                        Event::Ankan { .. } => {
-                            if reveal_dora_at_discard {
-                                events.push(Event::Dora { dora_marker: t!(?) });
-                                reveal_dora_at_discard = false;
-                            }
-                            events.push(fuuro_iter.next().unwrap());
-                            events.push(Event::Dora { dora_marker: t!(?) });
-                            events.push(Event::Tsumo { actor, pai: t!(?) });
-                        }
-                        Event::Kakan { pai, .. } if kakan_candidates.contains(pai) => {
-                            events.push(fuuro_iter.next().unwrap());
-                            if reveal_dora_at_discard {
-                                events.push(Event::Dora { dora_marker: t!(?) });
-                            }
-                            events.push(Event::Tsumo { actor, pai: t!(?) });
-                            reveal_dora_at_discard = true;
-                        }
-                        _ => break,
-                    }
-                }
-            }
-
-            if let Some(sutehai) = sutehai {
-                if sutehai.riichi {
-                    events.push(Event::Reach { actor });
-                    scores[actor as usize] += 1000;
-                    kyotaku = kyotaku.saturating_sub(1);
-                }
-                events.push(Event::Dahai {
-                    actor,
-                    pai: sutehai.pai,
-                    tsumogiri: !sutehai.tedashi,
-                });
-                if reveal_dora_at_discard {
-                    events.push(Event::Dora { dora_marker: t!(?) });
-                }
-            }
-
-            if !(events.len() == 1 && matches!(events[0], Event::Tsumo { .. }) && !(rel_player == 0 && at_discard)) {
-                turns[actor as usize].push((events, next_player.copied()));
-            }
-        }
-        if fuuro_iter.next().is_some() {
-            bail!("more calls than tsumos");
-        }
-    }
 
     // remaining tiles which have not been witnessed and could therefore be in someone's tehai
     let mut remaining_tiles = [4_i8; 37]; // may go negative in case it's not 3aka
@@ -322,11 +210,207 @@ pub fn generate_mjai_logs(board: Board) -> Result<Vec<Event>> {
         remaining_tiles[tile.as_usize()] -= 1;
     }
 
+    // process fuuros by creating call events
+    // separate kakan from other events, because they do not have a set order other than being after a pon
+    let mut fuuro_events_abs: [Vec<Event>; 4] = from_fn(|_| vec![]);
+    let mut kakan_events_abs: [Vec<Event>; 4] = from_fn(|_| vec![]);
+    let mut naki_count_abs = [0; 4];
+    for (rel_player, fuuro) in board.fuuro.iter().enumerate() {
+        let actor = player_abs(rel_player);
+        for event in fuuro.to_events(actor)? {
+            match event {
+                Event::Kakan { .. } => {
+                    kakan_events_abs[actor as usize].push(event);
+                }
+                _ => {
+                    fuuro_events_abs[actor as usize].push(event);
+                    naki_count_abs[actor as usize] += 1;
+                }
+            }
+        }
+    }
+
+    let mut sutehai_iter_rel = board.kawa.map(|kawa| kawa.into_iter().peekable());
+    let mut fuuro_events_iter_abs = fuuro_events_abs.map(|fuuro_events| fuuro_events.into_iter().peekable());
+    let mut kakan_events_iter_abs = kakan_events_abs.map(|fuuro_events| fuuro_events.into_iter().peekable());
+    let initial_dora_indicator = *board.dora_indicators.first().context("missing dora indicator")?;
+    let mut dora_iter = board.dora_indicators.into_iter().skip(1);
+
+    // process the upcoming events by guessing what the next reasonable call and discard is
+    // we prefer putting calls as early as possible to lessen an issue of some states being unrepresentable
+    // multiple kan events in a single turn are possible and dora events are properly inserted
+    let mut events = vec![];
+    let mut current_actor = oya;
+    let mut next_draw_event: Option<Event> = None;
+    let mut kakan_candidates = [false; 34];
+    loop {
+        let current_actor_rel = player_rel(current_actor);
+
+        let mut reveal_dora_at_discard = false;
+        let mut turn_events = vec![];
+
+        let draw_event = match &next_draw_event {
+            Some(draw_event @ Event::Pon { pai, .. }) => {
+                kakan_candidates[pai.as_usize()] = true;
+                draw_event.clone()
+            }
+            Some(draw_event @ Event::Daiminkan { .. }) => {
+                turn_events.push(draw_event.clone());
+                reveal_dora_at_discard = true;
+                Event::Tsumo {
+                    actor: current_actor,
+                    pai: t!(?),
+                }
+            }
+            Some(draw_event) => draw_event.clone(), // chi
+            None => Event::Tsumo {
+                actor: current_actor,
+                pai: t!(?),
+            },
+        };
+        turn_events.push(draw_event.clone());
+
+        // self-declared kan may only happen after tsumo (including from rinshan)
+        // we arbitarily prefer kakan before ankan since it's technically earlier in the fuuro
+        if matches!(draw_event, Event::Tsumo { .. }) {
+            while let Some(kan_event) = kakan_events_iter_abs[current_actor as usize]
+                .next_if(|event| matches!(event, Event::Kakan { pai, .. } if kakan_candidates[pai.as_usize()]))
+                .or_else(|| fuuro_events_iter_abs[current_actor as usize].next_if(|event| matches!(event, Event::Ankan { .. })))
+            {
+                match kan_event {
+                    Event::Kakan { pai, .. } if kakan_candidates[pai.as_usize()] => {
+                        turn_events.push(kan_event);
+                        if reveal_dora_at_discard {
+                            turn_events.push(Event::Dora {
+                                dora_marker: dora_iter.next().context("missing dora indicator")?,
+                            });
+                        }
+                        turn_events.push(Event::Tsumo {
+                            actor: current_actor,
+                            pai: t!(?),
+                        });
+                        reveal_dora_at_discard = true;
+                    }
+                    Event::Ankan { .. } => {
+                        turn_events.push(kan_event);
+                        if reveal_dora_at_discard {
+                            turn_events.push(Event::Dora {
+                                dora_marker: dora_iter.next().context("missing dora indicator")?,
+                            });
+                            reveal_dora_at_discard = false;
+                        }
+                        turn_events.push(Event::Dora {
+                            dora_marker: dora_iter.next().context("missing dora indicator")?,
+                        });
+                        turn_events.push(Event::Tsumo {
+                            actor: current_actor,
+                            pai: t!(?),
+                        });
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+
+        // next sutehai is one of: discard that will be called by someone, discard visible in kawa, none because just a draw
+        // next call is only valid if current actor is the target and the player's next discard is legal under kuikae
+        // normally pon has priority over chi, however we can assume without consequences that the ponning player skipped the first time
+        // it is possible that we for example decide to discard 1m, shimocha wants to chi (1m)2m3m but the next visible discard is 4m
+        // this call would be legal if we could insert an implied discard if shimocha will feed another player's call, and therefore discard a non-kuikae tile
+        // however in this situation we can always postpone the call from current actor to shimocha to the next discard
+        // unfortunately we render a small set of board states with many calls and little discards unparseable
+        let next_event_targetting_actor = fuuro_events_iter_abs.iter_mut().enumerate().find_map(|(call_actor, it)| {
+            it.next_if(|event| {
+                event.naki_info().is_some_and(|(target, _)| target == current_actor)
+                    && sutehai_iter_rel[player_rel(call_actor as u8) as usize].peek().is_none_or(
+                        |Sutehai {
+                             pai: sutehai_pai,
+                             tedashi,
+                             ..
+                         }| {
+                            match event {
+                                Event::Chi { pai, consumed, .. } => {
+                                    *tedashi
+                                        && pai != sutehai_pai
+                                        && match ChiType::new(*consumed, *pai) {
+                                            ChiType::Low => *sutehai_pai != pai.next().next().next(),
+                                            ChiType::Mid => true,
+                                            ChiType::High => *sutehai_pai != pai.prev().prev().prev(),
+                                        }
+                                }
+                                Event::Pon { pai, .. } => *tedashi && pai != sutehai_pai,
+                                _ => true, // daiminkan, no kuikae, tedashi irrelevant
+                            }
+                        },
+                    )
+            })
+        });
+        let sutehai;
+        (sutehai, next_draw_event) = if let Some(event) = next_event_targetting_actor {
+            let (_, pai) = event.naki_info().unwrap();
+            let estimated_sutehai = Sutehai {
+                pai,
+                tedashi: true,
+                riichi: false,
+            };
+            (Some(estimated_sutehai), Some(event))
+        } else if let Some(sutehai) = sutehai_iter_rel[current_actor_rel as usize].next() {
+            (Some(sutehai), None)
+        } else {
+            (None, None)
+        };
+
+        if let Some(sutehai) = sutehai {
+            if sutehai.riichi {
+                turn_events.push(Event::Reach { actor: current_actor });
+                scores[current_actor as usize] += 1000;
+                kyotaku = kyotaku.saturating_sub(1);
+            }
+            turn_events.push(Event::Dahai {
+                actor: current_actor,
+                pai: sutehai.pai,
+                tsumogiri: !sutehai.tedashi,
+            });
+            if reveal_dora_at_discard {
+                turn_events.push(Event::Dora {
+                    dora_marker: dora_iter.next().context("missing dora indicator")?,
+                });
+            }
+        } else {
+            // no discard must mean it is the last event
+            // we keep the tsumo only if the inputted tehai indicates it's our turn
+            if !(turn_events.len() == 1
+                && matches!(turn_events[0], Event::Tsumo { .. })
+                && !(current_actor_rel == 0 && at_discard))
+            {
+                events.extend(turn_events);
+            }
+            break;
+        }
+
+        events.extend(turn_events);
+        current_actor = if let Some(next_draw_event) = &next_draw_event {
+            next_draw_event.actor().unwrap()
+        } else {
+            (current_actor + 1) % 4
+        };
+    }
+    if sutehai_iter_rel.iter_mut().any(|iter| iter.peek().is_some())
+        || fuuro_events_iter_abs.iter_mut().any(|iter| iter.peek().is_some())
+        || kakan_events_iter_abs.iter_mut().any(|iter| iter.peek().is_some())
+    {
+        bail!(
+            "Not all events were depleted: sutehai {:?} fuuro {:?} kakan {:?}",
+            sutehai_iter_rel.map(|iter| iter.collect::<Vec<_>>()),
+            fuuro_events_iter_abs.map(|iter| iter.collect::<Vec<_>>()),
+            kakan_events_iter_abs.map(|iter| iter.collect::<Vec<_>>())
+        );
+    }
+
     // reverse pass to fill in tehai and tsumo tiles
-    let mut tehais: [Vec<Tile>; 4] = from_fn(|_| vec![t!(?); 13]);
-    tehais[player_id as usize] = board.tehai;
+    let mut tehais_abs: [Vec<Tile>; 4] = from_fn(|_| vec![t!(?); 13]);
+    tehais_abs[player_id as usize] = board.tehai;
     for player in (0..=3).filter(|player| *player != player_id) {
-        // TODO: merge shouminkan and pon
         let expected_tehai_size = 13 - 3 * naki_count_abs[player as usize];
         let mut tehai = vec![];
         'outer: for (tile, count) in remaining_tiles.iter_mut().enumerate() {
@@ -338,53 +422,51 @@ pub fn generate_mjai_logs(board: Board) -> Result<Vec<Event>> {
                 *count -= 1;
             }
         }
-        tehais[player as usize] = tehai;
+        tehais_abs[player as usize] = tehai;
     }
 
-    for (player, turns) in turns.iter_mut().enumerate() {
-        for (turn, _) in turns.iter_mut().rev() {
-            for event in turn.iter_mut().rev() {
-                match event {
-                    Event::Tsumo { .. } => {
-                        *event = Event::Tsumo {
-                            actor: player as u8,
-                            pai: tehais[player].pop().unwrap(),
-                        }
-                    }
-                    Event::Dahai { tsumogiri, pai, .. } => {
-                        if *tsumogiri {
-                            tehais[player].push(*pai);
-                        } else {
-                            tehais[player].insert(tehais[player].len() - 2, *pai);
-                        }
-                    }
-                    Event::Chi { consumed, .. } | Event::Pon { consumed, .. } => {
-                        tehais[player].extend(consumed.iter());
-                    }
-                    Event::Daiminkan { consumed, .. } => {
-                        tehais[player].extend(consumed.iter());
-                    }
-                    Event::Kakan { pai, .. } => {
-                        tehais[player].push(*pai);
-                    }
-                    Event::Ankan { consumed, .. } => {
-                        tehais[player].extend(consumed.iter());
-                    }
-                    _ => {}
+    for event in events.iter_mut().rev() {
+        match event {
+            Event::Tsumo { actor, .. } => {
+                *event = Event::Tsumo {
+                    actor: *actor,
+                    pai: tehais_abs[*actor as usize].pop().unwrap(),
                 }
             }
+            Event::Dahai { actor, pai, tsumogiri } => {
+                if *tsumogiri {
+                    tehais_abs[*actor as usize].push(*pai);
+                } else {
+                    tehais_abs[*actor as usize].insert(tehais_abs[*actor as usize].len() - 2, *pai);
+                }
+            }
+            Event::Chi { actor, consumed, .. } | Event::Pon { actor, consumed, .. } => {
+                tehais_abs[*actor as usize].extend(consumed.iter());
+            }
+            Event::Daiminkan { actor, consumed, .. } => {
+                tehais_abs[*actor as usize].extend(consumed.iter());
+            }
+            Event::Kakan { actor, pai, .. } => {
+                tehais_abs[*actor as usize].push(*pai);
+            }
+            Event::Ankan { actor, consumed, .. } => {
+                tehais_abs[*actor as usize].extend(consumed.iter());
+            }
+            _ => {}
         }
     }
 
-    let mut events = vec![];
     let seen_aka = remaining_tiles[34..37].iter().any(|count| *count < 1);
-    events.push(Event::StartGame {
-        id: Some(player_id),
-        aka_flag: seen_aka,
-        names: from_fn(|_| String::new()),
-        kyoku_first: 1,
-    });
-    let tehais = tehais
+    events.insert(
+        0,
+        Event::StartGame {
+            id: Some(player_id),
+            aka_flag: seen_aka,
+            names: from_fn(|_| String::new()),
+            kyoku_first: 1,
+        },
+    );
+    let tehais = tehais_abs
         .into_iter()
         .map(|tehai| {
             tehai.try_into().map_err(|tehai_vec: Vec<Tile>| {
@@ -394,41 +476,19 @@ pub fn generate_mjai_logs(board: Board) -> Result<Vec<Event>> {
         .collect::<Result<Vec<[Tile; 13]>>>()?
         .try_into()
         .unwrap();
-    let mut dora_iter = board.dora_indicators.into_iter();
-    events.push(Event::StartKyoku {
-        bakaze: board.bakaze,
-        dora_marker: dora_iter.next().context("missing dora indicator")?,
-        kyoku: board.kyoku,
-        honba: board.honba,
-        kyotaku,
-        oya,
-        scores,
-        tehais,
-    });
-
-    let mut current_player = oya;
-    let mut turns_iter = turns.map(|turns| turns.into_iter());
-    loop {
-        let Some((mut turn_events, next_player)) = turns_iter[current_player as usize].next() else {
-            break;
-        };
-        for event in &mut turn_events {
-            if matches!(event, Event::Dora { .. }) {
-                // this is the only place we can be sure the dora events are well ordered
-                *event = Event::Dora {
-                    dora_marker: dora_iter.next().context("missing dora indicator")?,
-                };
-            }
-        }
-        events.append(&mut turn_events);
-        current_player = next_player.unwrap_or((current_player + 1) % 4);
-    }
-    if turns_iter.iter_mut().any(|turns| turns.len() != 0) {
-        bail!(
-            "Incorrect number of turns, remaining {:?}",
-            turns_iter.map(|turns| turns.len())
-        );
-    }
+    events.insert(
+        1,
+        Event::StartKyoku {
+            bakaze: board.bakaze,
+            dora_marker: initial_dora_indicator,
+            kyoku: board.kyoku,
+            honba: board.honba,
+            kyotaku,
+            oya,
+            scores,
+            tehais,
+        },
+    );
 
     Ok(events)
 }
@@ -440,7 +500,7 @@ mod test {
     use super::*;
 
     fn to_sutehai(kawa: &[Tile]) -> Vec<Sutehai> {
-        kawa.into_iter()
+        kawa.iter()
             .map(|&pai| Sutehai {
                 pai,
                 tedashi: true,
@@ -505,13 +565,15 @@ mod test {
         };
         let events = generate_mjai_logs(board)?;
         let tenhou = mjai_to_tenhou(&events)?;
-        assert_eq!(tenhou.to_string_pretty()?, r#"{
+        assert_eq!(
+            tenhou.to_string_pretty()?,
+            r#"{
     "log": [ [ [ 2, 1, 1 ],
         [ 37500, 21300, 32500, 7700 ],
         [ 45 ],
         [],
-        [ 11, 11, 12, 12, 12, 12, 13, 14, 18, 21, 15, 39, 39 ],
-        [ "3939p39", 11, 11, 47, 29, 14, 14 ],
+        [ 11, 11, 12, 12, 12, 12, 13, 14, 15, 11, 11, 18, 21 ],
+        [ 39, 39, "3939p39", 47, 29, 14, 14 ],
         [ 18, 21, 15, 11, 11, 47, 29 ],
         [ 15, 16, 16, 16, 17, 17, 17, 17, 18, 19, 19, 39, 41 ],
         [ 19, 21, 42, 43, 19, 21 ],
@@ -519,14 +581,15 @@ mod test {
         [ 13, 14, 15, 16, 22, 23, 24, 24, 52, 32, 34, 29, 44 ],
         [ 27, 28, 45, 37, 38, 13 ],
         [ 29, 44, 27, 28, 45 ],
-        [ 21, 22, 22, 22, 23, 23, 23, 24, 44, 29, 28, 18, 18 ],
-        [ "1818p18", 26, 13, 42, 24, 25 ],
+        [ 21, 22, 22, 22, 23, 23, 23, 24, 29, 28, 26, 44, 18 ],
+        [ 18, "1818p18", 13, 42, 24, 25 ],
         [ 44, 29, 28, 26, 13, 42 ],
         [ "Ryuukyoku", [ 0, 0, 0, 0 ] ] ] ],
     "name": [ "", "", "", "" ],
     "rule": { "disp": "南", "aka": 0, "aka51": 1, "aka52": 1, "aka53": 1
     }
-}"#);
+}"#
+        );
         Ok(())
     }
 }

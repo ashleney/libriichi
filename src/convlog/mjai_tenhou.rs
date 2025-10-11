@@ -61,7 +61,7 @@ pub fn mjai_to_tenhou(events: &[Event]) -> Result<RawLog> {
                 actor, pai, consumed, ..
             } => {
                 let naki = format!(
-                    "{}c{}{}",
+                    "c{}{}{}",
                     TenhouTile::from(pai) as u8,
                     TenhouTile::from(consumed[0]) as u8,
                     TenhouTile::from(consumed[1]) as u8
